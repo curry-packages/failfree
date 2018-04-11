@@ -1,0 +1,21 @@
+{
+    "name": "nonfailing",
+    "version": "0.0.1",
+    "author": "Michael Hanus <mh@informatik.uni-kiel.de>",
+    "synopsis": "A tool to analyze the non-failing behavior of Curry programs",
+    "category": [ "Programming", "Analysis", "Verification" ],
+    "license": "BSD-3-Clause",
+    "licenseFile": "LICENSE",
+    "dependencies": {
+        "cass-analysis": ">= 0.0.1",
+        "cass"         : ">= 0.0.1",
+        "flatcurry"    : ">= 1.0.0",
+        "flatcurry-annotated": ">= 1.0.0",
+        "showflatcurry"      : ">= 0.0.1"
+     },
+    "compilerCompatibility": {
+        "pakcs": ">= 1.14.0, < 2.0.0",
+        "kics2": ">= 0.5.0, < 2.0.0"
+    },
+     "configModule": "PackageConfig"
+}
