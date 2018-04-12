@@ -17,5 +17,14 @@
         "pakcs": ">= 1.14.0, < 2.0.0",
         "kics2": ">= 0.5.0, < 2.0.0"
     },
-     "configModule": "PackageConfig"
+    "configModule": "PackageConfig",
+    "executable": {
+        "name": "curry-nonfail",
+        "main": "Main"
+    },
+    "testsuite": {
+        "src-dir": "examples",
+        "script": "test.sh",
+        "options": "-v"
+    }
 }

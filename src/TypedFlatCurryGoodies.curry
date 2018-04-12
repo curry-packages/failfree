@@ -7,9 +7,10 @@
 
 module TypedFlatCurryGoodies where
 
-import FlatCurry.Files
+import Directory    ( doesFileExist )
+import Distribution ( lookupModuleSourceInLoadPath )
 import IOExts
-import List         ( find, nub )
+import List         ( find, nub, union )
 import Maybe        ( fromJust )
 import Pretty       ( pPrint )
 import System       ( exitWith )
@@ -20,6 +21,7 @@ import FlatCurry.Annotated.Goodies
 import FlatCurry.Annotated.Pretty        ( ppExp )
 import FlatCurry.Annotated.Types
 import FlatCurry.Annotated.TypeInference ( inferProg )
+import FlatCurry.Files
 
 import VerificationState
 
@@ -32,7 +34,7 @@ type TABranchExpr = ABranchExpr TypeExpr
 type TAPattern    = APattern    TypeExpr
 
 ----------------------------------------------------------------------------
---- Reads a type FlatCurry program or exit with a failure message
+--- Reads a typed FlatCurry program or exits with a failure message
 --- in case of some typing error.
 readTypedFlatCurry :: String -> IO TAProg
 readTypedFlatCurry mname = do
@@ -42,17 +44,36 @@ readTypedFlatCurry mname = do
                   exitWith 1)
            return
 
+--- Reads a typed FlatCurry program together with a possible `_SPEC` program
+--- (containing further contracts) or exits with a failure message
+--- in case of some typing error.
+readTypedFlatCurryWithSpec :: String -> IO TAProg
+readTypedFlatCurryWithSpec mname = do
+  prog <- readTypedFlatCurry mname
+  fspec <- lookupModuleSourceInLoadPath specName
+  if fspec == Nothing
+    then return prog
+    else do specprog <- readTypedFlatCurry specName
+            return (unionTAProg prog (rnmProg mname specprog))
+ where
+  specName = mname ++ "_SPEC"
+
+--- Returns the union of two typed FlatCurry programs.
+unionTAProg :: TAProg -> TAProg -> TAProg
+unionTAProg (AProg name imps1 types1 funcs1 ops1)
+            (AProg _    imps2 types2 funcs2 ops2) =
+  AProg name (union imps1 imps2) (types1++types2) (funcs1++funcs2) (ops1++ops2)
+
 ----------------------------------------------------------------------------
 --- Extract all user-defined typed FlatCurry functions that might be called
 --- by a given list of functions.
-getAllFunctions :: IORef VState -> [TAFuncDecl] -> [QName]
-                -> IO [TAFuncDecl]
-getAllFunctions vstref currfuns newfuns = do
+getAllFunctions :: IORef VState -> [TAFuncDecl] -> [QName] -> IO [TAFuncDecl]
+getAllFunctions vstref currfuncs newfuns = do
   currmods <- readIORef vstref >>= return . currTAProgs
-  getAllFunctions' currfuns currmods newfuns
+  getAllFuncs currmods newfuns
  where
-  getAllFunctions' currfuncs _ [] = return (reverse currfuncs)
-  getAllFunctions' currfuncs currmods (newfun:newfuncs)
+  getAllFuncs _ [] = return (reverse currfuncs)
+  getAllFuncs currmods (newfun:newfuncs)
     | newfun `elem` standardConstructors ++ map funcName currfuncs
       || isPrimOp newfun
     = getAllFunctions vstref currfuncs newfuncs
@@ -106,6 +127,11 @@ ndExpr = trExpr (\_ _ -> False)
 ppTAExpr :: TAExpr -> String
 ppTAExpr e = pPrint (ppExp e)
 
+--- Sets the top annotation of a pattern.
+setAnnPattern :: TypeExpr -> TAPattern -> TAPattern
+setAnnPattern ann (ALPattern _ lit) = ALPattern ann lit
+setAnnPattern ann (APattern _ aqn vars) = APattern ann aqn vars
+
 ----------------------------------------------------------------------------
 --- Is a qualified FlatCurry name primitive?
 isPrimOp :: QName -> Bool
@@ -129,7 +155,8 @@ preludePrimOps =
   ,("not","not")
   ,("&&","and")
   ,("||","or")
-  ,("apply","") -- SMT name not used
+  ,("otherwise","true")
+  ,("apply","apply") -- TODO...
   ]
 
 --- Primitive constructors from the prelude and their SMT names.
@@ -139,6 +166,7 @@ primCons =
   ,("False","false")
   ,("[]","nil")
   ,(":","insert")
+  ,("(,)","mk-pair")
   ]
 
 -- Some standard constructors from the prelude.

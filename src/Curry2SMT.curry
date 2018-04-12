@@ -99,6 +99,8 @@ type2SMTExp (TCons (mn,tc) targs)
   | mn=="Prelude" && length targs == 0 = BTerm tc []
   | mn=="Prelude" && tc == "[]" && length targs == 1
   = BTerm "List" [type2SMTExp (head targs)]
+  | mn=="Prelude" && tc == "(,)" && length targs == 2
+  = BTerm "Pair" (map type2SMTExp targs)
   | otherwise = BTerm (mn ++ "." ++ tc) [] -- TODO: complete
 --type2SMTExp (ForallType _ _) = error "type2SMT: cannot translate ForallType"
 
