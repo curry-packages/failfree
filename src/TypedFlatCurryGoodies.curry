@@ -2,7 +2,7 @@
 --- Some goodies to deal with type-annotated FlatCurry programs.
 ---
 --- @author  Michael Hanus
---- @version September 2017
+--- @version April 2018
 ---------------------------------------------------------------------------
 
 module TypedFlatCurryGoodies where
@@ -23,6 +23,7 @@ import FlatCurry.Annotated.Types
 import FlatCurry.Annotated.TypeInference ( inferProg )
 import FlatCurry.Files
 
+import ToolOptions
 import VerificationState
 
 -- Type synomyms for type-annotated FlatCurry entities:
@@ -47,13 +48,17 @@ readTypedFlatCurry mname = do
 --- Reads a typed FlatCurry program together with a possible `_SPEC` program
 --- (containing further contracts) or exits with a failure message
 --- in case of some typing error.
-readTypedFlatCurryWithSpec :: String -> IO TAProg
-readTypedFlatCurryWithSpec mname = do
+readTypedFlatCurryWithSpec :: Options -> String -> IO TAProg
+readTypedFlatCurryWithSpec opts mname = do
+  whenStatus opts $ putStr $
+    "Loading typed FlatCurry program '" ++ mname ++ "'..."
   prog <- readTypedFlatCurry mname
   fspec <- lookupModuleSourceInLoadPath specName
   if fspec == Nothing
-    then return prog
-    else do specprog <- readTypedFlatCurry specName
+    then whenStatus opts (putStrLn "done") >> return prog
+    else do whenStatus opts $ putStr $ "'" ++ specName ++ "'..."
+            specprog <- readTypedFlatCurry specName
+            whenStatus opts $ putStrLn "done"
             return (unionTAProg prog (rnmProg mname specprog))
  where
   specName = mname ++ "_SPEC"
@@ -62,7 +67,8 @@ readTypedFlatCurryWithSpec mname = do
 unionTAProg :: TAProg -> TAProg -> TAProg
 unionTAProg (AProg name imps1 types1 funcs1 ops1)
             (AProg _    imps2 types2 funcs2 ops2) =
-  AProg name (union imps1 imps2) (types1++types2) (funcs1++funcs2) (ops1++ops2)
+  AProg name (filter (/=name) (union imps1 imps2))
+        (types1++types2) (funcs1++funcs2) (ops1++ops2)
 
 ----------------------------------------------------------------------------
 --- Extract all user-defined typed FlatCurry functions that might be called

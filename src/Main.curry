@@ -1,3 +1,10 @@
+-----------------------------------------------------------------------------
+--- A tool to verify non-failure properties of Curry operations.
+---
+--- @author  Michael Hanus
+--- @version April 2018
+---------------------------------------------------------------------------
+
 module Main where
 
 import Directory    ( doesFileExist )
@@ -18,7 +25,6 @@ import CASS.Server             ( analyzeGeneric, analyzePublic )
 import FlatCurry.Annotated.Types
 import FlatCurry.Files
 import qualified FlatCurry.Goodies as FCG
---import FlatCurry.Annotated.Files   ( readTypedFlatCurry )
 import FlatCurry.Annotated.Goodies
 import ShowFlatCurry                     ( showCurryModule )
 
@@ -26,7 +32,7 @@ import ShowFlatCurry                     ( showCurryModule )
 import BoolExp
 import Curry2SMT
 import PackageConfig ( packagePath )
-import AnalysisOptions
+import ToolOptions
 import PatternAnalysis
 import VerificationState
 import TypedFlatCurryGoodies
@@ -35,7 +41,7 @@ test :: Int -> String -> IO ()
 test v = analyzeNonFailing defaultOptions { optVerb = v }
 
 testv :: String -> IO ()
-testv = analyzeNonFailing defaultOptions { optVerb = 3 }
+testv = test 3
 
 ------------------------------------------------------------------------
 
@@ -59,17 +65,21 @@ main = do
       putStrLn "NON-FAILING ANALYSIS SKIPPED:"
       putStrLn "The SMT solver Z3 is required for the analyzer to work"
       putStrLn "but the program 'z3' is not found on the PATH!"
+      exitWith 1
 
 
 analyzeNonFailing :: Options -> String -> IO ()
 analyzeNonFailing opts modname = do
-  prog <- readTypedFlatCurryWithSpec modname
+  printWhenStatus opts $ "Analyzing module '" ++ modname ++ "':"
+  prog <- readTypedFlatCurryWithSpec opts modname
+  impprogs <- mapIO (readTypedFlatCurryWithSpec opts) (progImports prog)
+  let vstate = foldr addProgToState initVState (prog:impprogs)
+      tinfo  = foldr addFunsToTransInfo (initTransInfo opts)
+                     (map progFuncs (prog:impprogs))
   siblingconsinfo <- loadAnalysisWithImports siblingCons prog
   printWhenAll opts $ unlines $
     ["ORIGINAL PROGRAM:", line, showCurryModule (unAnnProg prog), line]
-  stats <- verifyNonFailing opts siblingconsinfo
-                        (makeTransInfo opts (progFuncs prog))
-                        prog initVState
+  stats <- verifyNonFailing opts siblingconsinfo tinfo (progFuncs prog) vstate
   printWhenStatus opts (showStats stats)
  where
   line = take 78 (repeat '-')
@@ -85,34 +95,25 @@ loadAnalysisWithImports analysis prog = do
   return $ foldr combineProgInfo maininfo impinfos
 
 ---------------------------------------------------------------------------
-
-printWhenStatus :: Options -> String -> IO ()
-printWhenStatus opts s =
-  when (optVerb opts > 0) (printWT s)
-
-printWhenIntermediate :: Options -> String -> IO ()
-printWhenIntermediate opts s =
-  when (optVerb opts > 1) (printWT s)
-
-printWhenAll :: Options -> String -> IO ()
-printWhenAll opts s =
- when (optVerb opts > 2) (printWT s)
-
-printWT :: String -> IO ()
-printWT s = putStrLn $ "NON-FAILING ANALYSIS: " ++ s
-
----------------------------------------------------------------------------
 -- Some global information used by the transformation process:
 data TransInfo = TransInfo
   { tiOptions     :: Options      -- options passed to all defined operations
-  , allFuns       :: [TAFuncDecl] -- all defined operations
+  , allFuncs      :: [TAFuncDecl] -- all defined operations
   , preConds      :: [TAFuncDecl] -- all precondition operations
   , postConds     :: [TAFuncDecl] -- all postcondition operations
   , nfConds       :: [TAFuncDecl] -- all non-failure condition operations
   }
 
-makeTransInfo :: Options -> [TAFuncDecl] -> TransInfo
-makeTransInfo opts fdecls = TransInfo opts fdecls preconds postconds nfconds
+initTransInfo :: Options -> TransInfo
+initTransInfo opts = TransInfo opts [] [] [] []
+
+addFunsToTransInfo :: [TAFuncDecl] -> TransInfo -> TransInfo
+addFunsToTransInfo fdecls ti =
+  ti { allFuncs  = fdecls    ++ allFuncs  ti
+     , preConds  = preconds  ++ preConds  ti
+     , postConds = postconds ++ postConds ti
+     , nfConds   = nfconds   ++ nfConds   ti
+     }
  where
   -- Precondition operations:
   preconds  = filter (\fd -> "'pre"     `isSuffixOf` snd (funcName fd)) fdecls
@@ -156,12 +157,11 @@ addVarTypes vts st = st { varTypes = vts ++ varTypes st }
 -- a precondition check, a proof for the validity of the precondition
 -- is extracted and, if the proof is successful, the operation without
 -- the precondtion check `f'WithoutPreCondCheck` is called instead.
-verifyNonFailing :: Options -> ProgInfo [(QName,Int)] -> TransInfo -> TAProg
-                 -> VState -> IO VState
-verifyNonFailing opts siblingconsinfo ti prog stats = do
+verifyNonFailing :: Options -> ProgInfo [(QName,Int)] -> TransInfo
+                 -> [TAFuncDecl] -> VState -> IO VState
+verifyNonFailing opts siblingconsinfo ti fdecls stats = do
   vstref <- newIORef stats
-  modifyIORef vstref (addProgToState prog)
-  mapIO_ (proveNonFailingFunc opts siblingconsinfo ti vstref) (progFuncs prog)
+  mapIO_ (proveNonFailingFunc opts siblingconsinfo ti vstref) fdecls
   readIORef vstref
 
 proveNonFailingFunc :: Options -> ProgInfo [(QName,Int)] -> TransInfo
@@ -172,19 +172,21 @@ proveNonFailingFunc opts siblingconsinfo ti vstref fdecl =
       "Operation to be analyzed: " ++ snd (funcName fdecl)
     modifyIORef vstref incNumAllInStats
     proveNonFailingRule opts siblingconsinfo ti
-      (funcName fdecl) (funcRule fdecl) vstref
+      (funcName fdecl) (funcArity fdecl) (funcRule fdecl) vstref
 
 proveNonFailingRule :: Options -> ProgInfo [(QName,Int)] -> TransInfo
-                    -> QName -> TARule -> IORef VState -> IO ()
-proveNonFailingRule _ _ _ _ (AExternal _ _) _ = done
-proveNonFailingRule opts siblingconsinfo ti (mn,fn)
+                    -> QName -> Int -> TARule -> IORef VState -> IO ()
+proveNonFailingRule _ _ ti qn farity (AExternal _ _) vstref = do
+  let (nfcond,_)  = nonfailCondExpOf ti qn [1..farity] (makeTransState 0 [])
+  unless (nfcond == bTrue) $ modifyIORef vstref incNumNFCInStats
+proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
                     (ARule _ rargs rhs) vstref = do
   let farity = length rargs
-      orgqn = (mn,fn)
       -- compute non-fail precondition of operation:
       s0 = makeTransState (maximum (0 : map fst rargs ++ allVars rhs) + 1) rargs
-      (precondformula,s1)  = nonfailCondExpOf ti orgqn [1..farity] s0
+      (precondformula,s1)  = nonfailCondExpOf ti qn [1..farity] s0
       s2 = s1 { preCond = precondformula }
+  unless (precondformula == bTrue) $ modifyIORef vstref incNumNFCInStats
   proveNonFailExp s2 rhs
  where
   proveNonFailExp pts exp = case exp of
@@ -572,12 +574,12 @@ checkImplicationWithSMT opts vstref vartypes assertion impbindings imp = do
   smtfuncs   <- funcs2SMT vstref allqsymbols
   smtprelude <- readFile (packagePath </> "include" </> "Prelude.smt")
   let smtinput = smtprelude ++ smtfuncs ++ smt
-  printWhenIntermediate opts $ unlines ["SMT SCRIPT:", line, smtinput, line]
-  printWhenIntermediate opts $ "CALLING Z3..."
+  printWhenAll opts $ unlines ["SMT SCRIPT:", line, smtinput, line]
+  printWhenAll opts $ "CALLING Z3..."
   (ecode,out,err) <- evalCmd "z3" ["-smt2", "-in", "-T:5"] smtinput
-  when (ecode>0) $ printWhenIntermediate opts $ "EXIT CODE: " ++ show ecode
-  printWhenIntermediate opts $ "RESULT:\n" ++ out
-  unless (null err) $ printWhenIntermediate opts $ "ERROR:\n" ++ err
+  when (ecode>0) $ printWhenAll opts $ "EXIT CODE: " ++ show ecode
+  printWhenAll opts $ "RESULT:\n" ++ out
+  unless (null err) $ printWhenAll opts $ "ERROR:\n" ++ err
   let pcvalid = let ls = lines out in not (null ls) && head ls == "unsat"
   return (if ecode>0 then Nothing else Just pcvalid)
  where

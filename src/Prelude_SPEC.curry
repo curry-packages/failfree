@@ -34,6 +34,10 @@ op_x2121'nonfail xs n = n >= 0 && length (take (n+1) xs) == n+1
 -- External operations:
 
 -- Non-failure condition for `=:=`.
+failed'nonfail :: Bool
+failed'nonfail = False
+
+-- Non-failure condition for `=:=`.
 op_x3D3A3D'nonfail :: a -> a -> Bool
 op_x3D3A3D'nonfail _ _ = False
 

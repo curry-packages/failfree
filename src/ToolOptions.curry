@@ -5,7 +5,10 @@
 --- @version April 2018
 -------------------------------------------------------------------------
 
-module AnalysisOptions( Options(..), defaultOptions, processOptions )
+module ToolOptions
+  ( Options(..), defaultOptions, processOptions
+  , whenStatus, printWhenStatus, printWhenIntermediate, printWhenAll
+  )
  where
 
 import Distribution      ( stripCurrySuffix )
@@ -69,3 +72,22 @@ options =
                      else error "Illegal verbosity level (try `-h' for help)"
 
 -------------------------------------------------------------------------
+
+whenStatus :: Options -> IO () -> IO ()
+whenStatus opts = when (optVerb opts > 0)
+
+printWhenStatus :: Options -> String -> IO ()
+printWhenStatus opts s = whenStatus opts (printWT s)
+
+printWhenIntermediate :: Options -> String -> IO ()
+printWhenIntermediate opts s =
+  when (optVerb opts > 1) (printWT s)
+
+printWhenAll :: Options -> String -> IO ()
+printWhenAll opts s =
+ when (optVerb opts > 2) (printWT s)
+
+printWT :: String -> IO ()
+printWT s = putStrLn $ s --"NON-FAILING ANALYSIS: " ++ s
+
+---------------------------------------------------------------------------
