@@ -51,7 +51,7 @@ fdecl2SMT (AFunc qn _ _ _ rule) = unlines
     lhs = BTerm (transOpName qn) (map (BVar . fst) vs)
 
 -- Translate a typed FlatCurry expression into an SMT expression.
--- If the first argument contains an SMT expression, an equation between
+-- If the first argument is an SMT expression, an equation between
 -- this expression and the translated result expression is generated.
 -- This is useful to axiomatize non-deterministic operations.
 exp2SMT :: Maybe BoolExp -> TAExpr -> BoolExp

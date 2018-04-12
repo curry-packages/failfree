@@ -1,3 +1,6 @@
+------------------------------------------------------------------------------
+-- Non-failure conditions for Prelude operations.
+
 solve'nonfail :: Bool -> Bool
 solve'nonfail x = x
 
@@ -27,7 +30,7 @@ op_x263E'nonfail x _ = x
 op_x2121'nonfail :: [a] -> Int -> Bool
 op_x2121'nonfail xs n = n >= 0 && length (take (n+1) xs) == n+1
 
----------------------------------------------------------------------------
+------------------------------------------------------------------------------
 -- External operations:
 
 -- Non-failure condition for `=:=`.
@@ -48,7 +51,7 @@ op_x26'nonfail x y = x && y
 
 chr'nonfail :: Int -> Bool
 chr'nonfail n = n>=0
-{-
+
 div'nonfail :: Int -> Int -> Bool
 div'nonfail x y = y/=0
 
@@ -67,4 +70,5 @@ rem'nonfail x y = y/=0
 quotRem'nonfail :: Int -> Int -> Bool
 quotRem'nonfail x y = y/=0
 
--}
+------------------------------------------------------------------------------
+

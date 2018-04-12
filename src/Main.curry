@@ -495,6 +495,9 @@ pred2bool exp = case exp of
           nts  = addVarTypes [(fvar,annExpr exp)] (incFreshVarIndex ts)
       in putS nts `bindS_`
          returnS (BVar fvar)
+    | qf == pre "/="
+    = comb2bool (pre "==") ar args `bindS` \be ->
+      returnS (bNot be)
     | otherwise
     = mapS pred2bool args `bindS` \bargs ->
       returnS (BTerm (transOpName qf) bargs)
