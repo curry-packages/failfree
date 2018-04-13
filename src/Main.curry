@@ -204,7 +204,7 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
                  (\_ -> do
                    let reason = "due to call '" ++ ppTAExpr exp ++ "'"
                    modifyIORef vstref (addFailedFuncToStats fn reason)
-                   printWhenStatus opts $
+                   printWhenIntermediate opts $
                      fn ++ ": POSSIBLY FAILING CALL OF '" ++ snd qf ++ "'")
                      (find (\fd -> funcName fd == qnpre) (nfConds ti))
           when (ct==FuncCall) $ do
@@ -215,7 +215,9 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
             -- TODO: select from 'bindexps' only demanded argument positions
             valid <- if nfcondcall == bTrue
                        then return (Just True) -- true non-fail cond. is valid
-                       else checkImplicationWithSMT opts vstref (varTypes pts3)
+                       else do
+                         modifyIORef vstref incFailTestInStats
+                         checkImplicationWithSMT opts vstref (varTypes pts3)
                               (preCond pts) (Conj bindexps) nfcondcall
             if valid == Just True
               then do
@@ -226,7 +228,7 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
                                then "due to SMT error"
                                else "due to call '" ++ ppTAExpr exp ++ "'"
                 modifyIORef vstref (addFailedFuncToStats fn reason)
-                printWhenStatus opts $
+                printWhenIntermediate opts $
                   fn ++ ": POSSIBLY FAILING CALL OF '" ++ snd qf ++ "'"
     ACase _ _ e brs -> do
       proveNonFailExp pts e
@@ -262,6 +264,7 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
   verifyMissingCons pts (var,vartype) (cons,_) = do
     printWhenIntermediate opts $
       fn ++ ": checking missing constructor case '" ++ snd cons ++ "'"
+    modifyIORef vstref incPatTestInStats
     valid <- checkImplicationWithSMT opts vstref (varTypes pts) (preCond pts)
                 bTrue (bNot (constructorTest cons (BVar var) vartype))
     unless (valid == Just True) $ do
@@ -270,8 +273,9 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
                      else "maybe not defined on constructor '" ++
                           showQName cons ++ "'"
       modifyIORef vstref (addFailedFuncToStats fn reason)
-      printWhenStatus opts $ "POSSIBLY FAILING BRANCH in function '" ++ fn ++
-                             "' with constructor " ++ snd cons
+      printWhenIntermediate opts $
+        "POSSIBLY FAILING BRANCH in function '" ++ fn ++
+        "' with constructor " ++ snd cons
 
   proveNonFailBranch pts (var,vartype) branch = do
     let (ABranch p e, pts1) = renamePatternVars pts branch
@@ -665,7 +669,10 @@ Still to be done:
 Verified system libraries:
 
 - Prelude
+- AnsiCodes
 - Either
+- ErrorState
 - Maybe
+- State
 
 -}

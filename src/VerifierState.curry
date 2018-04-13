@@ -7,24 +7,27 @@ import FlatCurry.Annotated.Types
 -- statistical information and the programs that are already read (to
 -- avoid multiple readings).
 data VState = VState
-  { failedFuncs :: [(String,String)] -- partially defined operations
-                                     -- and their failing reason
-  , numAllFuncs :: Int               -- number of analyzed operations
-  , numNFCFuncs :: Int               -- number of operations with non-trivial
-                                     -- non-failing conditions
-  , currTAProgs :: [AProg TypeExpr]  -- already read typed FlatCurry programs
+  { failedFuncs  :: [(String,String)] -- partially defined operations
+                                      -- and their failing reason
+  , numAllFuncs  :: Int               -- number of analyzed operations
+  , numNFCFuncs  :: Int               -- number of operations with non-trivial
+                                      -- non-failing conditions
+  , numPatTests  :: Int               -- number of missing pattern tests
+  , numFailTests :: Int               -- number of tests of failure calls
+  , currTAProgs  :: [AProg TypeExpr]  -- already read typed FlatCurry programs
   }
 
 initVState :: VState
-initVState = VState [] 0 0 []
+initVState = VState [] 0 0 0 0 []
 
 --- Shows the statistics in human-readable format.
 showStats :: VState -> String
 showStats vstate =
-  "\nNUMBER OF TESTED OPERATIONS: " ++ show (numAllFuncs vstate) ++ "\n" ++
-  "NUMBER OF OPERATIONS WITH NONFAIL CONDITIONS: " ++
-  show (numNFCFuncs vstate) ++ "\n" ++
-  showStat "POSSIBLY FAILING OPERATIONS" (failedFuncs vstate) ++
+  "\nTESTED OPERATIONS        : " ++ show (numAllFuncs vstate) ++
+  "\nNONFAIL CONDITIONS       : " ++ show (numNFCFuncs vstate) ++
+  "\nTESTS OF MISSING PATTERNS: " ++ show (numPatTests vstate) ++
+  "\nTESTS OF NON-FAIL CALLS  : " ++ show (numFailTests vstate) ++
+  showStat "\nPOSSIBLY FAILING OPERATIONS" (failedFuncs vstate) ++
   (if isVerified vstate then "\nNON-FAILURE VERIFICATION SUCCESSFUL!" else "")
  where
   showStat t fs =
@@ -50,6 +53,14 @@ incNumAllInStats vstate = vstate { numAllFuncs = numAllFuncs vstate + 1 }
 --- Increments the number of operations with nonfail conditions.
 incNumNFCInStats :: VState -> VState
 incNumNFCInStats vstate = vstate { numNFCFuncs = numNFCFuncs vstate + 1 }
+
+--- Increments the number of missing pattern tests.
+incPatTestInStats :: VState -> VState
+incPatTestInStats vstate = vstate { numPatTests = numPatTests vstate + 1 }
+
+--- Increments the number of test of posibble failure calls.
+incFailTestInStats :: VState -> VState
+incFailTestInStats vstate = vstate { numFailTests = numFailTests vstate + 1 }
 
 --- Adds a new typed FlatCurry program to the state.
 addProgToState :: AProg TypeExpr -> VState -> VState
