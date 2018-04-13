@@ -24,6 +24,7 @@ import Analysis.Types
 import CASS.Server             ( analyzeGeneric, analyzePublic )
 import FlatCurry.Annotated.Types
 import FlatCurry.Files
+import FlatCurry.Types
 import qualified FlatCurry.Goodies as FCG
 import FlatCurry.Annotated.Goodies
 import ShowFlatCurry                     ( showCurryModule )
@@ -39,7 +40,7 @@ import VerifierState
 
 
 test :: Int -> String -> IO ()
-test v = analyzeNonFailing defaultOptions { optVerb = v }
+test v = verifyNonFailingMod defaultOptions { optVerb = v }
 
 testv :: String -> IO ()
 testv = test 3
@@ -61,16 +62,34 @@ main = do
   if z3exists
     then do
       when (optVerb opts > 0) $ putStrLn banner
-      mapIO_ (analyzeNonFailing opts) progs
+      verifyNonFailingModules opts [] progs
     else do
       putStrLn "NON-FAILING ANALYSIS SKIPPED:"
       putStrLn "The SMT solver Z3 is required for the analyzer to work"
       putStrLn "but the program 'z3' is not found on the PATH!"
       exitWith 1
 
+verifyNonFailingModules :: Options -> [String] -> [String] -> IO ()
+verifyNonFailingModules _ _ [] = done
+verifyNonFailingModules opts verifiedmods (mod:mods)
+  | mod `elem` verifiedmods
+  = verifyNonFailingModules opts verifiedmods mods
+  | optRec opts
+  = do (Prog _ imps _ _ _) <- readFlatCurryInt mod
+       let newimps = filter (`notElem` verifiedmods) imps
+       if null newimps
+         then do putStrLn ""
+                 verifyNonFailingMod opts mod
+                 verifyNonFailingModules opts (mod:verifiedmods) mods
+         else verifyNonFailingModules opts verifiedmods
+                     (newimps ++ mod : (mods \\ newimps))
+  | otherwise -- non-recursive
+  = do verifyNonFailingMod opts mod
+       verifyNonFailingModules opts (mod:verifiedmods) mods
+  
 
-analyzeNonFailing :: Options -> String -> IO ()
-analyzeNonFailing opts modname = do
+verifyNonFailingMod :: Options -> String -> IO ()
+verifyNonFailingMod opts modname = do
   printWhenStatus opts $ "Analyzing module '" ++ modname ++ "':"
   prog <- readTypedFlatCurryWithSpec opts modname
   impprogs <- mapIO (readTypedFlatCurryWithSpec opts) (progImports prog)
@@ -80,7 +99,7 @@ analyzeNonFailing opts modname = do
   siblingconsinfo <- loadAnalysisWithImports siblingCons prog
   printWhenAll opts $ unlines $
     ["ORIGINAL PROGRAM:", line, showCurryModule (unAnnProg prog), line]
-  stats <- verifyNonFailing opts siblingconsinfo tinfo (progFuncs prog) vstate
+  stats <- proveNonFailingFuncs opts siblingconsinfo tinfo (progFuncs prog) vstate
   when (optVerb opts > 0 || not (isVerified stats)) $
     putStrLn (showStats stats)
  where
@@ -159,9 +178,9 @@ addVarTypes vts st = st { varTypes = vts ++ varTypes st }
 -- a precondition check, a proof for the validity of the precondition
 -- is extracted and, if the proof is successful, the operation without
 -- the precondtion check `f'WithoutPreCondCheck` is called instead.
-verifyNonFailing :: Options -> ProgInfo [(QName,Int)] -> TransInfo
-                 -> [TAFuncDecl] -> VState -> IO VState
-verifyNonFailing opts siblingconsinfo ti fdecls stats = do
+proveNonFailingFuncs :: Options -> ProgInfo [(QName,Int)] -> TransInfo
+                     -> [TAFuncDecl] -> VState -> IO VState
+proveNonFailingFuncs opts siblingconsinfo ti fdecls stats = do
   vstref <- newIORef stats
   mapIO_ (proveNonFailingFunc opts siblingconsinfo ti vstref) fdecls
   readIORef vstref
