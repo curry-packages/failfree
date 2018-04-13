@@ -32,10 +32,11 @@ import ShowFlatCurry                     ( showCurryModule )
 import BoolExp
 import Curry2SMT
 import PackageConfig ( packagePath )
-import ToolOptions
 import PatternAnalysis
-import VerificationState
+import ToolOptions
 import TypedFlatCurryGoodies
+import VerifierState
+
 
 test :: Int -> String -> IO ()
 test v = analyzeNonFailing defaultOptions { optVerb = v }
@@ -186,8 +187,9 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
       s0 = makeTransState (maximum (0 : map fst rargs ++ allVars rhs) + 1) rargs
       (precondformula,s1)  = nonfailCondExpOf ti qn [1..farity] s0
       s2 = s1 { preCond = precondformula }
-  unless (precondformula == bTrue) $ modifyIORef vstref incNumNFCInStats
-  proveNonFailExp s2 rhs
+  unless (precondformula == bTrue)  $ modifyIORef vstref incNumNFCInStats
+  -- verify only if the precondition is different from always failing:
+  unless (precondformula == bFalse) $ proveNonFailExp s2 rhs
  where
   proveNonFailExp pts exp = case exp of
     AComb ty ct (qf,_) args ->

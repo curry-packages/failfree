@@ -17,7 +17,7 @@ import FlatCurry.Annotated.Types
 -- Imports from package modules:
 import BoolExp
 import TypedFlatCurryGoodies
-import VerificationState
+import VerifierState
 
 --- Translates a list of operations specified by their qualified name
 --- (together with all operations on which these operation depend on)

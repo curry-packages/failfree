@@ -24,7 +24,7 @@ import FlatCurry.Annotated.TypeInference ( inferProg )
 import FlatCurry.Files
 
 import ToolOptions
-import VerificationState
+import VerifierState
 
 -- Type synomyms for type-annotated FlatCurry entities:
 type TAProg       = AProg       TypeExpr
@@ -173,6 +173,9 @@ primCons =
   ,("[]","nil")
   ,(":","insert")
   ,("(,)","mk-pair")
+  ,("LT","LT")
+  ,("EQ","EQ")
+  ,("GT","GT")
   ]
 
 -- Some standard constructors from the prelude.

@@ -1,4 +1,4 @@
-module VerificationState where
+module VerifierState where
 
 import FlatCurry.Annotated.Types
 
