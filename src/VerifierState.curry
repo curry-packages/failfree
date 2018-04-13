@@ -21,7 +21,7 @@ initVState = VState [] 0 0 []
 --- Shows the statistics in human-readable format.
 showStats :: VState -> String
 showStats vstate =
-  "\n\nNUMBER OF TESTED OPERATIONS: " ++ show (numAllFuncs vstate) ++ "\n" ++
+  "\nNUMBER OF TESTED OPERATIONS: " ++ show (numAllFuncs vstate) ++ "\n" ++
   "NUMBER OF OPERATIONS WITH NONFAIL CONDITIONS: " ++
   show (numNFCFuncs vstate) ++ "\n" ++
   showStat "POSSIBLY FAILING OPERATIONS" (failedFuncs vstate) ++

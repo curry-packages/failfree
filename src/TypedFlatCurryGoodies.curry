@@ -8,7 +8,9 @@
 module TypedFlatCurryGoodies where
 
 import Directory    ( doesFileExist )
-import Distribution ( lookupModuleSourceInLoadPath )
+import Distribution ( getLoadPathForModule, lookupModuleSource
+                    , stripCurrySuffix )
+import FilePath     ( (</>) )
 import IOExts
 import List         ( find, nub, union )
 import Maybe        ( fromJust )
@@ -23,6 +25,7 @@ import FlatCurry.Annotated.Types
 import FlatCurry.Annotated.TypeInference ( inferProg )
 import FlatCurry.Files
 
+import PackageConfig ( packagePath )
 import ToolOptions
 import VerifierState
 
@@ -52,14 +55,20 @@ readTypedFlatCurryWithSpec :: Options -> String -> IO TAProg
 readTypedFlatCurryWithSpec opts mname = do
   whenStatus opts $ putStr $
     "Loading typed FlatCurry program '" ++ mname ++ "'..."
-  prog <- readTypedFlatCurry mname
-  fspec <- lookupModuleSourceInLoadPath specName
-  if fspec == Nothing
-    then whenStatus opts (putStrLn "done") >> return prog
-    else do whenStatus opts $ putStr $ "'" ++ specName ++ "'..."
-            specprog <- readTypedFlatCurry specName
-            whenStatus opts $ putStrLn "done"
-            return (unionTAProg prog (rnmProg mname specprog))
+  prog     <- readTypedFlatCurry mname
+  loadpath <- getLoadPathForModule specName
+  mbspec   <- lookupModuleSource (loadpath ++ [packagePath </> "include"])
+                                 specName
+  maybe ( whenStatus opts (putStrLn "done") >> return prog )
+        (\ (_,specname) -> do
+           let specpath = stripCurrySuffix specname
+           when (optVerb opts > 0) $ putStr $
+             "'" ++ (if optVerb opts > 1 then specpath else specName) ++ "'..."
+           specprog <- readTypedFlatCurry specpath
+           whenStatus opts $ putStrLn "done"
+           return (unionTAProg prog (rnmProg mname specprog))
+        )
+        mbspec
  where
   specName = mname ++ "_SPEC"
 
@@ -176,6 +185,10 @@ primCons =
   ,("LT","LT")
   ,("EQ","EQ")
   ,("GT","GT")
+  ,("Nothing","Nothing")
+  ,("Just","Just")
+  ,("Left","Left")
+  ,("Right","Right")
   ]
 
 -- Some standard constructors from the prelude.

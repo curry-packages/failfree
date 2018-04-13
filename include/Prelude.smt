@@ -10,6 +10,12 @@
 ; For functional types:
 (declare-datatypes (T1 T2) ((Func (mk-func (argument T1) (result T2)))))
 
+; Maybe type:
+(declare-datatypes (T) ((Maybe Nothing (Just (just T)))))
+
+; Either type:
+(declare-datatypes (T1 T2) ((Either (Left (left T1)) (Right (right T2)))))
+  
 ; Ordering type:
 (declare-datatypes () ((Ordering LT EQ GT)))
 

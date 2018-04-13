@@ -71,10 +71,11 @@ exp2SMT lhs exp = case exp of
  where
   makeRHS rhs = maybe rhs (\l -> bEqu l rhs) lhs
 
-  branches2SMT _ [] = error "branches2SMT: empty branch list"
+  branches2SMT _  [] = error "branches2SMT: empty branch list"
   branches2SMT be [ABranch p e] = branch2SMT be p e
   branches2SMT be (ABranch p e : brs@(_:_)) =
-    BTerm "ite" [bEqu be (pat2bool p), branch2SMT be p e,
+    BTerm "ite" [patternTest p be, --bEqu be (pat2bool p),
+                 branch2SMT be p e,
                  branches2SMT be brs]
   
   branch2SMT _  (ALPattern _ _) e = exp2SMT lhs e
@@ -84,8 +85,27 @@ exp2SMT lhs exp = case exp of
                           (zip (selectors qf) (map fst ps)))
                      (exp2SMT lhs e)
 
+patternTest :: TAPattern -> BoolExp -> BoolExp
+patternTest (ALPattern _ l) be = bEqu be (lit2bool l)
+patternTest (APattern ty (qf,_) _) be = constructorTest qf be ty
+
+--- Translates a constructor name and a BoolExp into a SMT formula
+--- implementing a test on the BoolExp for this constructor.
+constructorTest :: QName -> BoolExp -> TypeExpr -> BoolExp
+constructorTest qn  be vartype
+  | qn == pre "[]"
+  = bEqu be (BTerm "as" [BTerm "nil" [], type2SMTExp vartype])
+  | qn `elem` map pre ["[]","True","False","LT","EQ","GT","Nothing"]
+  = bEqu be (BTerm (transOpName qn) [])
+  | qn `elem` map pre ["Just","Left","Right"]
+  = BTerm ("is-" ++ snd qn) [be]
+  | otherwise = error $ "Test for constructor " ++ showQName qn ++
+                        " not yet supported!"
+
 selectors :: QName -> [String]
 selectors qf | qf == ("Prelude",":") = ["head","tail"]
+             | qf == ("Prelude","Left") = ["left"]
+             | qf == ("Prelude","Right") = ["right"]
              | otherwise = error $ "Unknown selectors: " ++ snd qf
 
 --- Translates a FlatCurry type expression into a corresponding
@@ -96,11 +116,11 @@ type2SMTExp (TVar _) = BTerm "TVar" []
 type2SMTExp (FuncType dom ran) = BTerm "Func" (map type2SMTExp [dom,ran])
 type2SMTExp (TCons (mn,tc) targs)
   | mn=="Prelude" && tc == "Char"      = BTerm "Int" []
-  | mn=="Prelude" && length targs == 0 = BTerm tc []
   | mn=="Prelude" && tc == "[]" && length targs == 1
   = BTerm "List" [type2SMTExp (head targs)]
   | mn=="Prelude" && tc == "(,)" && length targs == 2
   = BTerm "Pair" (map type2SMTExp targs)
+  | mn=="Prelude" = BTerm tc (map type2SMTExp targs)
   | otherwise = BTerm (mn ++ "." ++ tc) [] -- TODO: complete
 --type2SMTExp (ForallType _ _) = error "type2SMT: cannot translate ForallType"
 

@@ -66,6 +66,15 @@ which might raise exceptions.
 
 ---------------------------------------------------------------------------
 
+Current restrictions:
+---------------------
+
+- The nonfail specification should be a Boolean formula, i.e.,
+  not a function with pattern matching or local definitions
+  
+
+---------------------------------------------------------------------------
+
 Notes:
 ------
 

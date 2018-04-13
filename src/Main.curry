@@ -81,7 +81,8 @@ analyzeNonFailing opts modname = do
   printWhenAll opts $ unlines $
     ["ORIGINAL PROGRAM:", line, showCurryModule (unAnnProg prog), line]
   stats <- verifyNonFailing opts siblingconsinfo tinfo (progFuncs prog) vstate
-  printWhenStatus opts (showStats stats)
+  when (optVerb opts > 0 || not (isVerified stats)) $
+    putStrLn (showStats stats)
  where
   line = take 78 (repeat '-')
 
@@ -249,25 +250,28 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
        (testBoolCase brs)
     AOr _ e1 e2 -> do proveNonFailExp pts e1
                       proveNonFailExp pts e2
-    ALet _ bs e -> do mapIO_ (proveNonFailExp pts) (map snd bs)
-                      proveNonFailExp pts e
-    AFree _ _ e -> proveNonFailExp pts e
+    ALet _ bs e -> do let ((rbs,re), pts1) = renameLetVars pts bs e
+                      mapIO_ (proveNonFailExp pts1) (map snd rbs)
+                      proveNonFailExp pts1 re
+    AFree _ fvs e -> do let ((_,re), pts1) = renameFreeVars pts fvs e
+                        proveNonFailExp pts1 re
     ATyped _ e _ -> proveNonFailExp pts e
-    _ -> done
+    AVar _ _ -> done
+    ALit _ _ -> done
 
-  verifyMissingCons pts typedvar (cons,_) = do
+  verifyMissingCons pts (var,vartype) (cons,_) = do
     printWhenIntermediate opts $
       fn ++ ": checking missing constructor case '" ++ snd cons ++ "'"
     valid <- checkImplicationWithSMT opts vstref (varTypes pts) (preCond pts)
-                bTrue (bNot (constructorTest cons typedvar))
+                bTrue (bNot (constructorTest cons (BVar var) vartype))
     unless (valid == Just True) $ do
       let reason = if valid == Nothing
                      then "due to SMT error"
                      else "maybe not defined on constructor '" ++
                           showQName cons ++ "'"
       modifyIORef vstref (addFailedFuncToStats fn reason)
-      putStrLn $ "POSSIBLY FAILING BRANCH in function '" ++ fn ++
-                 "' with constructor " ++ snd cons
+      printWhenStatus opts $ "POSSIBLY FAILING BRANCH in function '" ++ fn ++
+                             "' with constructor " ++ snd cons
 
   proveNonFailBranch pts (var,vartype) branch = do
     let (ABranch p e, pts1) = renamePatternVars pts branch
@@ -275,17 +279,6 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
         bpat = pat2bool (setAnnPattern vartype p)
         npts = pts1 { preCond = Conj [preCond pts1, bEquVar var bpat] }
     proveNonFailExp npts e
-
---- Translates a constructor name and a variable into a SMT formula
---- implementing a test for this constructor.
-constructorTest :: QName -> (Int,TypeExpr) -> BoolExp
-constructorTest qn (var,vartype)
-  | qn == pre "[]"
-  = bEquVar var (BTerm "as" [BTerm "nil" [], type2SMTExp vartype])
-  | qn `elem` [pre "[]", pre "True", pre "False"]
-  = bEquVar var (BTerm (transOpName qn) [])
-  | otherwise = error $ "Test for constructor " ++ showQName qn ++
-                        " not yet supported!"
 
 
 missingConsInBranch :: ProgInfo [(QName,Int)] -> [TABranchExpr] -> [(QName,Int)]
@@ -525,6 +518,37 @@ normalizeArgs (e:es) = case e of
                  returnS ((fvar,e):bs, AVar (annExpr e) fvar : nes)
 
 
+-- Rename let-bound variables in a let expression.
+renameLetVars :: TransState -> [((VarIndex, TypeExpr), TAExpr)] -> TAExpr
+              -> (([((VarIndex, TypeExpr), TAExpr)], TAExpr),TransState)
+renameLetVars pts bindings exp =
+  let args = map (fst . fst) bindings
+      minarg = minimum (0 : args)
+      maxarg = maximum (0 : args)
+      fv     = freshVar pts
+      rnm i = if i `elem` args then i - minarg + fv else i
+      nargs = map (\ ((v,t),_) -> (rnm v,t)) bindings
+  in ((map (\ ((v,t),be) -> ((rnm v,t), rnmAllVars rnm be)) bindings,
+       rnmAllVars rnm exp),
+      pts { freshVar = fv + maxarg - minarg + 1
+          , varTypes = nargs ++ varTypes pts })
+
+
+-- Rename free variables introduced in an expression.
+renameFreeVars :: TransState -> [(VarIndex, TypeExpr)] -> TAExpr
+              -> (([(VarIndex, TypeExpr)], TAExpr),TransState)
+renameFreeVars pts freevars exp =
+  let args = map fst freevars
+      minarg = minimum (0 : args)
+      maxarg = maximum (0 : args)
+      fv     = freshVar pts
+      rnm i = if i `elem` args then i - minarg + fv else i
+      nargs = map (\ (v,t) -> (rnm v,t)) freevars
+  in ((map (\ (v,t) -> (rnm v,t)) freevars, rnmAllVars rnm exp),
+      pts { freshVar = fv + maxarg - minarg + 1
+          , varTypes = nargs ++ varTypes pts })
+
+
 -- Rename argument variables of constructor pattern
 renamePatternVars :: TransState -> TABranchExpr -> (TABranchExpr,TransState)
 renamePatternVars pts (ABranch p e) =
@@ -634,8 +658,14 @@ Still to be done:
 - translate datatypes (with test functions!)
 - translate higher-order
 - consider encapsulated search
-- consider predefined functions, e.g.:
-  fail'nonfail = False
-  div'nonfail m n = n/=0
+- consider postconditions to verify, e.g., List.splitOn
+- type-specialize polymorphic operations when axiomatizing them in SMT
+
+
+Verified system libraries:
+
+- Prelude
+- Either
+- Maybe
 
 -}
