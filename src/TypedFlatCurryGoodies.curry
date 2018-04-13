@@ -14,7 +14,7 @@ import FilePath     ( (</>) )
 import IOExts
 import List         ( find, nub, union )
 import Maybe        ( fromJust )
-import Pretty       ( pPrint )
+import Pretty       ( pretty )
 import System       ( exitWith )
 
 -- Imports from dependencies:
@@ -140,7 +140,7 @@ ndExpr = trExpr (\_ _ -> False)
 
 --- Pretty prints an expression.
 ppTAExpr :: TAExpr -> String
-ppTAExpr e = pPrint (ppExp e)
+ppTAExpr e = pretty 200 (ppExp e)
 
 --- Sets the top annotation of a pattern.
 setAnnPattern :: TypeExpr -> TAPattern -> TAPattern

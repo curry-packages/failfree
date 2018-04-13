@@ -106,6 +106,7 @@ selectors :: QName -> [String]
 selectors qf | qf == ("Prelude",":") = ["head","tail"]
              | qf == ("Prelude","Left") = ["left"]
              | qf == ("Prelude","Right") = ["right"]
+             | qf == ("Prelude","Just") = ["just"]
              | otherwise = error $ "Unknown selectors: " ++ snd qf
 
 --- Translates a FlatCurry type expression into a corresponding

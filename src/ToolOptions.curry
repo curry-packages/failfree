@@ -19,6 +19,7 @@ import System            ( exitWith )
 data Options = Options
   { optVerb    :: Int    -- verbosity (0: quiet, 1: status, 2: interm, 3: all)
   , optHelp    :: Bool   -- if help info should be printed
+  , optError   :: Bool   -- should `error` be considered as a failing function?
   , optStrict  :: Bool   -- verify precondition w.r.t. strict evaluation?
                          -- in this case, we assume that all operations are
                          -- strictly evaluated which might give better results
@@ -28,7 +29,7 @@ data Options = Options
   }
 
 defaultOptions :: Options
-defaultOptions = Options 1 False False
+defaultOptions = Options 1 False False False
 
 --- Process the actual command line argument and return the options
 --- and the name of the main program.
@@ -57,6 +58,8 @@ options =
   , Option "v" ["verbosity"]
             (OptArg (maybe (checkVerb 2) (safeReadNat checkVerb)) "<n>")
             "verbosity level:\n0: quiet (same as `-q')\n1: show status messages (default)\n2: show intermediate results (same as `-v')\n3: show all intermediate results and more details"
+  , Option "e" ["error"] (NoArg (\opts -> opts { optError = True }))
+           "consider 'Prelude.error' as a failing operation"
   , Option "s" ["strict"] (NoArg (\opts -> opts { optStrict = True }))
            "check contracts w.r.t. strict evaluation strategy"
   ]

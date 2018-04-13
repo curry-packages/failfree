@@ -407,7 +407,8 @@ nonfailCondExpOf ti qf args =
  where
   qnpre = addSuffix qf "'nonfail"
 
-  predefs qn | qn `elem` [pre "failed", pre "=:="]
+  predefs qn | qn `elem` [pre "failed", pre "=:="] ||
+               (qn == pre "error" && optError (tiOptions ti))
              = returnS bFalse
              | otherwise = returnS bTrue
 
