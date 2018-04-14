@@ -12,7 +12,7 @@ import Distribution ( getLoadPathForModule, lookupModuleSource
                     , stripCurrySuffix )
 import FilePath     ( (</>) )
 import IOExts
-import List         ( find, nub, union )
+import List         ( find, maximum, nub, union )
 import Maybe        ( fromJust )
 import Pretty       ( pretty )
 import System       ( exitWith )
@@ -195,6 +195,49 @@ primCons =
 standardConstructors :: [QName]
 standardConstructors =
   map (pre . fst) primCons ++ [pre "()", pre "(,)", pre "(,,)"]
+
+----------------------------------------------------------------------------
+--- Eta-expansion of user-defined function declarations.
+etaExpandFuncDecl :: TAFuncDecl -> TAFuncDecl
+etaExpandFuncDecl fdecl@(AFunc _ _ _ _ (AExternal _ _)) = fdecl
+etaExpandFuncDecl (AFunc qn ar vis texp (ARule tr args rhs)) =
+  AFunc qn (ar + length etavars) vis texp
+        (ARule tr (args ++ etavars)
+               (applyExp rhs (map (\ (v,t) -> AVar t v) etavars)))
+ where
+  freshvar = maximum (0 : map fst args ++ allVars rhs) + 1
+  argtypes = argTypes texp
+  etavars  = zip [freshvar ..] (drop ar argtypes)
+
+  applyExp exp [] = exp
+  applyExp exp vars@(v1:vs) = case exp of
+    AComb te ct (qf,qt) cargs -> case ct of
+      FuncPartCall m -> applyExp (AComb (dropArgTypes 1 te)
+                                        (if m==1 then FuncCall
+                                                 else FuncPartCall (m-1))
+                                        (qf,qt) 
+                                        (cargs ++ [v1]))
+                                 vs
+      _ -> applyExp (AComb (dropArgTypes 1 te) FuncCall
+                           (pre "apply", FuncType (annExpr v1) te) [exp, v1]) vs
+    ACase  te ct e brs -> ACase (adjustType te) ct e
+                   (map (\ (ABranch p be) -> ABranch p (applyExp be vars)) brs)
+    AOr    te e1 e2 -> AOr (adjustType te) (applyExp e1 vars) (applyExp e2 vars)
+    ALet   te bs e  -> ALet   (adjustType te) bs (applyExp e vars)
+    AFree  te fvs e -> AFree  (adjustType te) fvs (applyExp e vars)
+    ATyped te e ty  -> ATyped (adjustType te) (applyExp e vars) (adjustType ty)
+    AVar   te _     -> applyExp (AComb (dropArgTypes 1 te) FuncCall
+                                       (pre "apply", FuncType (annExpr v1) te)
+                                       [exp, v1]) vs
+    ALit   _  _     -> error "etaExpandFuncDecl: cannot apply literal"
+   where
+    adjustType ty = dropArgTypes (length vars) ty 
+
+  --- Remove the given number of argument types from a (nested) functional type.
+  dropArgTypes n ty
+    | n==0      = ty
+    | otherwise = case ty of FuncType _ rt -> dropArgTypes (n-1) rt
+                             _ -> error "dropArgTypes: too few argument types"
 
 ----------------------------------------------------------------------------
 

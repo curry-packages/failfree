@@ -70,7 +70,9 @@ Current restrictions:
 ---------------------
 
 - The nonfail specification should be a Boolean formula, i.e.,
-  not a function with pattern matching or local definitions
+  not a function with pattern matching or local definitions.
+  Furthermore, it should be a first-order equation, i.e.,
+  in eta-expanded form.
   
 
 ---------------------------------------------------------------------------

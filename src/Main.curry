@@ -192,8 +192,9 @@ proveNonFailingFunc opts siblingconsinfo ti vstref fdecl =
     printWhenIntermediate opts $
       "Operation to be analyzed: " ++ snd (funcName fdecl)
     modifyIORef vstref incNumAllInStats
+    let efdecl = etaExpandFuncDecl fdecl
     proveNonFailingRule opts siblingconsinfo ti
-      (funcName fdecl) (funcArity fdecl) (funcRule fdecl) vstref
+      (funcName efdecl) (funcArity efdecl) (funcRule efdecl) vstref
 
 proveNonFailingRule :: Options -> ProgInfo [(QName,Int)] -> TransInfo
                     -> QName -> Int -> TARule -> IORef VState -> IO ()
