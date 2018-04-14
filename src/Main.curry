@@ -78,7 +78,7 @@ verifyNonFailingModules opts verifiedmods (mod:mods)
   = do (Prog _ imps _ _ _) <- readFlatCurryInt mod
        let newimps = filter (`notElem` verifiedmods) imps
        if null newimps
-         then do putStrLn ""
+         then do printWhenStatus opts ""
                  verifyNonFailingMod opts mod
                  verifyNonFailingModules opts (mod:verifiedmods) mods
          else verifyNonFailingModules opts verifiedmods
@@ -118,7 +118,7 @@ loadAnalysisWithImports analysis prog = do
 ---------------------------------------------------------------------------
 -- Some global information used by the transformation process:
 data TransInfo = TransInfo
-  { tiOptions     :: Options      -- options passed to all defined operations
+  { toolOpts      :: Options      -- options passed to all defined operations
   , allFuncs      :: [TAFuncDecl] -- all defined operations
   , preConds      :: [TAFuncDecl] -- all precondition operations
   , postConds     :: [TAFuncDecl] -- all postcondition operations
@@ -198,14 +198,14 @@ proveNonFailingFunc opts siblingconsinfo ti vstref fdecl =
 proveNonFailingRule :: Options -> ProgInfo [(QName,Int)] -> TransInfo
                     -> QName -> Int -> TARule -> IORef VState -> IO ()
 proveNonFailingRule _ _ ti qn farity (AExternal _ _) vstref = do
-  let (nfcond,_)  = nonfailCondExpOf ti qn [1..farity] (makeTransState 0 [])
+  let (nfcond,_)  = nonfailPreCondExpOf ti qn [1..farity] (makeTransState 0 [])
   unless (nfcond == bTrue) $ modifyIORef vstref incNumNFCInStats
 proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
                     (ARule _ rargs rhs) vstref = do
   let farity = length rargs
       -- compute non-fail precondition of operation:
       s0 = makeTransState (maximum (0 : map fst rargs ++ allVars rhs) + 1) rargs
-      (precondformula,s1)  = nonfailCondExpOf ti qn [1..farity] s0
+      (precondformula,s1)  = nonfailPreCondExpOf ti qn [1..farity] s0
       s2 = s1 { preCond = precondformula }
   unless (precondformula == bTrue)  $ modifyIORef vstref incNumNFCInStats
   -- verify only if the precondition is different from always failing:
@@ -230,7 +230,7 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
             printWhenIntermediate opts $ "Analyzing call to " ++ snd qf
             let ((bs,_)    ,pts1) = normalizeArgs args pts
                 (bindexps  ,pts2) = mapS (exp2bool True ti) bs pts1
-                (nfcondcall,pts3) = nonfailCondExpOf ti qf (map fst bs) pts2
+                (nfcondcall,pts3) = nonfailPreCondExpOf ti qf (map fst bs) pts2
             -- TODO: select from 'bindexps' only demanded argument positions
             valid <- if nfcondcall == bTrue
                        then return (Just True) -- true non-fail cond. is valid
@@ -337,7 +337,7 @@ exp2bool demanded ti (resvar,exp) = case exp of
       then exp2bool demanded ti (resvar, AOr ty (args!!0) (args!!1))
       else normalizeArgs args `bindS` \ (bs,nargs) ->
            -- TODO: select from 'bindexps' only demanded argument positions
-           mapS (exp2bool (isPrimOp qf || optStrict (tiOptions ti)) ti)
+           mapS (exp2bool (isPrimOp qf || optStrict (toolOpts ti)) ti)
                 bs `bindS` \bindexps ->
            comb2bool qf nargs bs bindexps
   ALet _ bs e ->
@@ -377,7 +377,11 @@ exp2bool demanded ti (resvar,exp) = case exp of
     | otherwise -- non-primitive operation: add contract only if demanded
     = preCondExpOf ti qf (map fst bs) `bindS` \precond ->
       postCondExpOf ti qf (map fst bs ++ [resvar]) `bindS` \postcond ->
-      returnS (Conj (bindexps ++ if demanded then [precond,postcond] else []))
+      -- TODO: use pre/postcondition only if explicitl
+      returnS (Conj (bindexps ++
+                     if demanded && optContract (toolOpts ti)
+                       then [precond,postcond]
+                       else []))
    
    branch2bool (cvar, (ABranch p e)) =
      exp2bool demanded ti (resvar,e) `bindS` \branchbexp ->
@@ -412,6 +416,18 @@ transSpecialName qn@(mn,fn)
           (\ (i,r) -> if null r then fromHex (chr i : s) cs else qn)
           (readHex [c1,c2])
 
+-- Returns the conjunction of the non-failure condition and precondition
+-- (if the tool option `contract` is set) expression for a given operation
+-- and its arguments (which are assumed to be variable indices).
+-- Rename all local variables by adding the `freshvar` index to them.
+nonfailPreCondExpOf :: TransInfo -> QName -> [Int] -> State TransState BoolExp
+nonfailPreCondExpOf ti qf args =
+  if optContract (toolOpts ti)
+    then nonfailCondExpOf ti qf args `bindS` \nfcond ->
+         preCondExpOf     ti qf args `bindS` \precond ->
+         returnS (simpBE (Conj [nfcond,precond]))
+    else nonfailCondExpOf ti qf args
+
 -- Returns the non-failure condition expression for a given operation
 -- and its arguments (which are assumed to be variable indices).
 -- Rename all local variables by adding the `freshvar` index to them.
@@ -427,7 +443,7 @@ nonfailCondExpOf ti qf args =
   qnpre = addSuffix qf "'nonfail"
 
   predefs qn | qn `elem` [pre "failed", pre "=:="] ||
-               (qn == pre "error" && optError (tiOptions ti))
+               (qn == pre "error" && optError (toolOpts ti))
              = returnS bFalse
              | otherwise = returnS bTrue
 

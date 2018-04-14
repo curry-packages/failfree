@@ -72,11 +72,11 @@ simpBE :: BoolExp ->DET BoolExp
 simpBE (Conj (bs1 ++ [BTerm "true" []] ++ bs2)) = simpBE (Conj (bs1 ++ bs2))
 simpBE (Conj (_ ++ [BTerm "false" []] ++ _)) = bFalse
 simpBE (Conj (bs1 ++ [Conj bs2] ++ bs3)) = simpBE (Conj (bs1 ++ bs2 ++ bs3))
-simpBE (Conj bs) = Conj (map simpBE bs)
+simpBE (Conj bs) = if null bs then bTrue else Conj (map simpBE bs)
 simpBE (Disj (bs1 ++ [BTerm "false" []] ++ bs2)) = simpBE (Disj (bs1 ++ bs2))
 simpBE (Disj (_ ++ [BTerm "true" []] ++ _)) = bTrue
 simpBE (Disj (bs1 ++ [Disj bs2] ++ bs3)) = simpBE (Disj (bs1 ++ bs2 ++ bs3))
-simpBE (Disj bs) = Disj (map simpBE bs)
+simpBE (Disj bs) = if null bs then bFalse else Disj (map simpBE bs)
 simpBE (Not (Not b)) = b
 simpBE (Binding _ [] e) = e
 simpBE (BTerm s args) = BTerm s (map simpBE args)

@@ -21,6 +21,7 @@ data Options = Options
   , optHelp    :: Bool   -- if help info should be printed
   , optError   :: Bool   -- should `error` be considered as a failing function?
   , optRec     :: Bool   -- recursive, i.e., verify imported modules first?
+  , optContract:: Bool   -- consider pre/postconditions for verification?
   , optStrict  :: Bool   -- verify precondition w.r.t. strict evaluation?
                          -- in this case, we assume that all operations are
                          -- strictly evaluated which might give better results
@@ -30,7 +31,7 @@ data Options = Options
   }
 
 defaultOptions :: Options
-defaultOptions = Options 1 False False False False
+defaultOptions = Options 1 False False False False False
 
 --- Process the actual command line argument and return the options
 --- and the name of the main program.
@@ -63,6 +64,8 @@ options =
            "consider 'Prelude.error' as a failing operation"
   , Option "r" ["recursive"] (NoArg (\opts -> opts { optRec = True }))
            "recursive, i.e., verify imported modules first"
+  , Option "c" ["contract"] (NoArg (\opts -> opts { optContract = True }))
+           "consider contract (pre/postcondition) for verification"
   , Option "s" ["strict"] (NoArg (\opts -> opts { optStrict = True }))
            "check contracts w.r.t. strict evaluation strategy"
   ]
