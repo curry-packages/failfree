@@ -13,6 +13,7 @@ import IOExts
 import List         ( (\\), elemIndex, find, isPrefixOf, isSuffixOf
                     , maximum, minimum, splitOn )
 import Maybe        ( catMaybes )
+import Profile
 import ReadNumeric  ( readHex )
 import State
 import System
@@ -97,9 +98,14 @@ verifyNonFailingMod opts modname = do
       tinfo  = foldr addFunsToTransInfo (initTransInfo opts)
                      (map progFuncs (prog:impprogs))
   siblingconsinfo <- loadAnalysisWithImports siblingCons prog
+  pi1 <- getProcessInfos
   printWhenAll opts $ unlines $
     ["ORIGINAL PROGRAM:", line, showCurryModule (unAnnProg prog), line]
   stats <- proveNonFailingFuncs opts siblingconsinfo tinfo (progFuncs prog) vstate
+  pi2 <- getProcessInfos
+  let tdiff = maybe 0 id (lookup ElapsedTime pi2) -
+              maybe 0 id (lookup ElapsedTime pi1)
+  putStrLn $ "Total verification time  : " ++ show tdiff ++ " msec"
   when (optVerb opts > 0 || not (isVerified stats)) $
     putStrLn (showStats stats)
  where
@@ -226,7 +232,7 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
                    modifyIORef vstref (addFailedFuncToStats fn reason)
                    printWhenIntermediate opts $
                      fn ++ ": POSSIBLY FAILING CALL OF '" ++ snd qf ++ "'")
-                     (find (\fd -> funcName fd == qnpre) (nfConds ti))
+                 (find (\fd -> funcName fd == qnpre) (nfConds ti))
           when (ct==FuncCall) $ do
             printWhenIntermediate opts $ "Analyzing call to " ++ snd qf
             let ((bs,_)    ,pts1) = normalizeArgs args pts
@@ -253,7 +259,8 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
     ACase _ _ e brs -> do
       proveNonFailExp pts e
       maybe
-       (let freshvar = freshVar pts
+       (-- check a case expression for missing constructors:
+        let freshvar = freshVar pts
             freshtypedvar = (freshvar, annExpr e)
             (be,pts1) = exp2bool True ti (freshvar,e) (incFreshVarIndex pts)
             pts2 = pts1 { preCond = Conj [preCond pts, be]
@@ -263,6 +270,7 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
               mapIO_ (proveNonFailBranch pts2 freshtypedvar) brs
        )
        (\ (fe,te) ->
+           -- check a Boolean case with True/False branch:
            let (be,pts1) = pred2bool e pts
                ptsf = pts1 { preCond = Conj [preCond pts, bNot be] }
                ptst = pts1 { preCond = Conj [preCond pts, be] }
@@ -281,6 +289,8 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
     AVar _ _ -> done
     ALit _ _ -> done
 
+  -- verify whether a variable (2. argument) can have the constructor (3. arg.)
+  -- as a value w.r.t. the collected assertions
   verifyMissingCons pts (var,vartype) (cons,_) = do
     printWhenIntermediate opts $
       fn ++ ": checking missing constructor case '" ++ snd cons ++ "'"
@@ -304,7 +314,8 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
         npts = pts1 { preCond = Conj [preCond pts1, bEquVar var bpat] }
     proveNonFailExp npts e
 
-
+-- Returns the constructors (name/arity) which are missing in the given
+-- branches of a case construct.
 missingConsInBranch :: ProgInfo [(QName,Int)] -> [TABranchExpr] -> [(QName,Int)]
 missingConsInBranch _ [] =
   error "missingConsInBranch: case with empty branches!"

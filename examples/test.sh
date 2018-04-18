@@ -7,7 +7,7 @@ if [ "$1" = "-v" ] ; then
 fi
 
 # Tool options:
-OPTS=
+OPTS=--contract
 
 /bin/rm -rf .curry
 ECODE=0

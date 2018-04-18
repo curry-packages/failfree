@@ -19,8 +19,9 @@
     },
     "configModule": "PackageConfig",
     "executable": {
-        "name": "curry-nonfail",
-        "main": "Main"
+        "name"   : "curry-nonfail",
+        "main"   : "Main",
+        "options": { "kics2" : ":set rts -T" }
     },
     "testsuite": {
         "src-dir": "examples",
