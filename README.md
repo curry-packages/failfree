@@ -1,5 +1,5 @@
-nonfailing: A tool for non-failing analysis
-===========================================
+failfree: A tool for verifying fail-free Curry programs
+=======================================================
 
 Objective: verify that all operations are non-failing, i.e.,
 does not result in a failure, if they are called with
@@ -92,5 +92,6 @@ Notes:
   For instance, the nonfail specification for `&>` can be named
   `op_x263E'nonfail`.
 
+- Operations defining contracts and properties are not verified.
 
 ---------------------------------------------------------------------------

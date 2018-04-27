@@ -79,7 +79,7 @@ simpBE (Disj (bs1 ++ [Disj bs2] ++ bs3)) = simpBE (Disj (bs1 ++ bs2 ++ bs3))
 simpBE (Disj bs) = if null bs then bFalse else Disj (map simpBE bs)
 simpBE (Not (Not b)) = b
 simpBE (Binding _ [] e) = e
-simpBE (BTerm s args) = BTerm s (map simpBE args)
+simpBE (BTerm f args) = BTerm f (map simpBE args)
 simpBE'default be = be
 
 ---------------------------------------------------------------------------
@@ -93,6 +93,7 @@ smtBE :: BoolExp -> String
 smtBE (BVar i) = 'x' : show i
 smtBE (BTerm f args)
   | f == "="  = asLisp ["=", smtBE (head args), smtBE (args!!1)]
+  | f == "/=" = smtBE (Not (BTerm "=" args))
   | f == "let" = asLisp ["let", asLisp (map (\ (BTerm _ [v,e]) -> asLisp [smtBE v, smtBE e]) (tail args)), smtBE (head args)]
   | otherwise = if null args then f
                              else asLisp $ f : map smtBE args
@@ -118,6 +119,7 @@ prettyBE :: BoolExp -> String
 prettyBE (BVar i) = 'x' : show i
 prettyBE (BTerm f args)
   | f == "="  = prettyBE (head args) ++ " = " ++ prettyBE (args!!1)
+  | f == "/=" = prettyBE (Not (BTerm "=" args))
   | null args = f
   | not (isAlpha (head f)) && length args == 2
   = prettyBE (args!!0) ++ f ++ prettyBE (args!!1)

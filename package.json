@@ -1,8 +1,8 @@
 {
-    "name": "nonfailing",
+    "name": "failfree",
     "version": "0.0.1",
     "author": "Michael Hanus <mh@informatik.uni-kiel.de>",
-    "synopsis": "A tool to analyze the non-failing behavior of Curry programs",
+    "synopsis": "A tool to verify whether a Curry program executes without failures",
     "category": [ "Programming", "Analysis", "Verification" ],
     "license": "BSD-3-Clause",
     "licenseFile": "LICENSE",
@@ -19,7 +19,7 @@
     },
     "configModule": "PackageConfig",
     "executable": {
-        "name"   : "curry-nonfail",
+        "name"   : "curry-failfree",
         "main"   : "Main",
         "options": { "kics2" : ":set rts -T" }
     },

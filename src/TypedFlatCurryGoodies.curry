@@ -156,6 +156,7 @@ isPrimOp (mn,fn) = mn=="Prelude" && fn `elem` map fst preludePrimOps
 preludePrimOps :: [(String,String)]
 preludePrimOps =
   [("==","=")
+  ,("/=","/=")  -- will be translated as negated '='
   ,("+","+")
   ,("-","-")
   ,("negate","-")

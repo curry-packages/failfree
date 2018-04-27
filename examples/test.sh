@@ -6,6 +6,8 @@ if [ "$1" = "-v" ] ; then
   VERBOSE=yes
 fi
 
+# Tool executable:
+TOOLBIN=curry-failfree
 # Tool options:
 OPTS=--contract
 
@@ -15,9 +17,9 @@ FAILEDTESTS=
 
 for p in *.curry ; do
   if [ $VERBOSE = yes ] ; then
-    curry-nonfail $OPTS $p | tee test.out
+    $TOOLBIN $OPTS $p | tee test.out
   else
-    curry-nonfail $OPTS $p > test.out
+    $TOOLBIN $OPTS $p > test.out
   fi
   if [ "`tail -1 test.out`" != "NON-FAILURE VERIFICATION SUCCESSFUL!" ] ; then
     echo "$p: FULL VERIFICATION FAILED!"

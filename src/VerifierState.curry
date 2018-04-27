@@ -1,6 +1,9 @@
 module VerifierState where
 
+import List ( find )
+
 import FlatCurry.Annotated.Types
+import FlatCurry.Annotated.Goodies
 
 ---------------------------------------------------------------------------
 -- The global state of the verification process keeps some
@@ -22,20 +25,20 @@ initVState = VState [] 0 0 0 0 []
 
 --- Shows the statistics in human-readable format.
 showStats :: VState -> String
-showStats vstate =
-  "\nTESTED OPERATIONS        : " ++ show (numAllFuncs vstate) ++
-  "\nNONFAIL CONDITIONS       : " ++ show (numNFCFuncs vstate) ++
-  "\nTESTS OF MISSING PATTERNS: " ++ show (numPatTests vstate) ++
-  "\nTESTS OF NON-FAIL CALLS  : " ++ show (numFailTests vstate) ++
-  showStat "\nPOSSIBLY FAILING OPERATIONS" (failedFuncs vstate) ++
-  (if isVerified vstate then "\nNON-FAILURE VERIFICATION SUCCESSFUL!" else "")
+showStats vstate = unlines $
+  [ "TESTED OPERATIONS        : " ++ show (numAllFuncs vstate)
+  , "NONFAIL CONDITIONS       : " ++ show (numNFCFuncs vstate)
+  , "TESTS OF MISSING PATTERNS: " ++ show (numPatTests vstate)
+  , "TESTS OF NON-FAIL CALLS  : " ++ show (numFailTests vstate) ] ++
+  showStat "POSSIBLY FAILING OPERATIONS" (failedFuncs vstate) ++
+  if isVerified vstate then ["NON-FAILURE VERIFICATION SUCCESSFUL!"] else []
  where
   showStat t fs =
     if null fs
-      then ""
-      else "\n" ++ t ++ ":\n" ++
-           unlines (map (\ (fn,reason) -> fn ++ " (" ++ reason ++ ")")
-                        (reverse fs))
+      then []
+      else (t ++ ":") :
+           map (\ (fn,reason) -> fn ++ " (" ++ reason ++ ")")
+               (reverse fs)
 
 --- Are all non-failing properties verified?
 isVerified :: VState -> Bool
@@ -65,5 +68,13 @@ incFailTestInStats vstate = vstate { numFailTests = numFailTests vstate + 1 }
 --- Adds a new typed FlatCurry program to the state.
 addProgToState :: AProg TypeExpr -> VState -> VState
 addProgToState prog vstate = vstate { currTAProgs = prog : currTAProgs vstate }
+
+---------------------------------------------------------------------------
+--- Selects the type declaration of a type constructor from the state.
+tdeclOf :: VState -> QName -> Maybe TypeDecl
+tdeclOf vst tcons@(mn,tc) =
+  maybe Nothing
+        (\p -> find (\td -> typeName td == tcons) (progTypes p))
+        (find (\p -> progName p == mn) (currTAProgs vst))
 
 ---------------------------------------------------------------------------

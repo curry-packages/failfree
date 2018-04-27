@@ -28,10 +28,11 @@ data Options = Options
                          -- but not not be correct if some argument is not
                          -- demanded (TODO: add demand analysis to make it
                          -- safe and powerful)
+  , optTime    :: Bool   -- show elapsed verification time?
   }
 
 defaultOptions :: Options
-defaultOptions = Options 1 False False False False False
+defaultOptions = Options 1 False False False False False False
 
 --- Process the actual command line argument and return the options
 --- and the name of the main program.
@@ -48,25 +49,35 @@ processOptions banner argv = do
 
 -- Help text
 usageText :: String
-usageText = usageInfo ("Usage: curry-ctopt [options] <module names>\n") options
-  
+usageText =
+  usageInfo ("Usage: curry-failfree [options] <module names>\n") options
+
 -- Definition of actual command line options.
 options :: [OptDescr (Options -> Options)]
 options =
-  [ Option "h?" ["help"]  (NoArg (\opts -> opts { optHelp = True }))
+  [ Option "h?" ["help"]
+           (NoArg (\opts -> opts { optHelp = True }))
            "print help and exit"
-  , Option "q" ["quiet"] (NoArg (\opts -> opts { optVerb = 0 }))
+  , Option "q" ["quiet"]
+           (NoArg (\opts -> opts { optVerb = 0 }))
            "run quietly (no output, only exit code)"
   , Option "v" ["verbosity"]
             (OptArg (maybe (checkVerb 2) (safeReadNat checkVerb)) "<n>")
-            "verbosity level:\n0: quiet (same as `-q')\n1: show status messages (default)\n2: show intermediate results (same as `-v')\n3: show all intermediate results and more details"
-  , Option "e" ["error"] (NoArg (\opts -> opts { optError = True }))
+            "verbosity level:\n0: quiet (same as `-q')\n1: show status messages (default)\n2: show intermediate results (same as `-v')\n3: show all details (e.g., SMT scripts)"
+  , Option "e" ["error"]
+           (NoArg (\opts -> opts { optError = True }))
            "consider 'Prelude.error' as a failing operation"
-  , Option "r" ["recursive"] (NoArg (\opts -> opts { optRec = True }))
+  , Option "r" ["recursive"]
+           (NoArg (\opts -> opts { optRec = True }))
            "recursive, i.e., verify imported modules first"
-  , Option "c" ["contract"] (NoArg (\opts -> opts { optContract = True }))
+  , Option "c" ["contract"]
+            (NoArg (\opts -> opts { optContract = True }))
            "consider contract (pre/postcondition) for verification"
-  , Option "s" ["strict"] (NoArg (\opts -> opts { optStrict = True }))
+  , Option "s" ["strict"]
+           (NoArg (\opts -> opts { optStrict = True }))
+           "check contracts w.r.t. strict evaluation strategy"
+  , Option "t" ["time"]
+           (NoArg (\opts -> opts { optTime = True }))
            "check contracts w.r.t. strict evaluation strategy"
   ]
  where

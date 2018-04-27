@@ -2,13 +2,14 @@
 --- A tool to translate FlatCurry operations into SMT assertions.
 ---
 --- @author  Michael Hanus
---- @version September 2017
+--- @version April 2018
 ---------------------------------------------------------------------------
 
 module Curry2SMT where
 
 import IOExts
-import Maybe        ( fromMaybe )
+import List         ( isPrefixOf )
+import Maybe        ( fromJust, fromMaybe )
 
 -- Imports from dependencies:
 import FlatCurry.Annotated.Goodies ( argTypes, resultType )
@@ -31,8 +32,8 @@ funcs2SMT vstref qns = do
 ftype2SMT :: TAFuncDecl -> String
 ftype2SMT (AFunc qn _ _ texp _) =
   asLisp ["declare-fun", transOpName qn,
-          asLisp (map (smtBE . type2SMTExp) (argTypes texp)),
-          smtBE (type2SMTExp (resultType texp))]
+          asLisp (map (smtBE . polytype2SMTExp) (argTypes texp)),
+          smtBE (polytype2SMTExp (resultType texp))]
 
 -- Axiomatize a function rule as an SMT assertion.
 fdecl2SMT :: TAFuncDecl -> String
@@ -43,7 +44,7 @@ fdecl2SMT (AFunc qn _ _ _ rule) = unlines
   rule2SMT (AExternal _ s) =
     assertSMT $ bEqu (BTerm (transOpName qn) []) (BTerm ("External:" ++ s) [])
   rule2SMT (ARule _ vs exp) =
-    assertSMT $ forallBinding (map (\ (v,t) -> (v, type2SMTExp t)) vs)
+    assertSMT $ forallBinding (map (\ (v,t) -> (v, polytype2SMTExp t)) vs)
                               (if ndExpr exp
                                  then exp2SMT (Just lhs) exp
                                  else bEqu lhs (exp2SMT Nothing exp))
@@ -65,7 +66,7 @@ exp2SMT lhs exp = case exp of
   ALet   _ bs e -> letBinding (map (\ ((v,_),be) -> (v, exp2SMT Nothing be)) bs)
                               (exp2SMT lhs e)
   ATyped _ e _ -> exp2SMT lhs e
-  AFree  _ fvs e -> forallBinding (map (\ (v,t) -> (v, type2SMTExp t)) fvs)
+  AFree  _ fvs e -> forallBinding (map (\ (v,t) -> (v, polytype2SMTExp t)) fvs)
                                   (exp2SMT lhs e)
   AOr    _ e1 e2 -> Disj [exp2SMT lhs e1, exp2SMT lhs e2]
  where
@@ -92,38 +93,95 @@ patternTest (APattern ty (qf,_) _) be = constructorTest qf be ty
 --- Translates a constructor name and a BoolExp into a SMT formula
 --- implementing a test on the BoolExp for this constructor.
 constructorTest :: QName -> BoolExp -> TypeExpr -> BoolExp
-constructorTest qn  be vartype
+constructorTest qn be vartype
   | qn == pre "[]"
-  = bEqu be (BTerm "as" [BTerm "nil" [], type2SMTExp vartype])
+  = bEqu be (BTerm "as" [BTerm "nil" [], polytype2SMTExp vartype])
   | qn `elem` map pre ["[]","True","False","LT","EQ","GT","Nothing"]
   = bEqu be (BTerm (transOpName qn) [])
   | qn `elem` map pre ["Just","Left","Right"]
   = BTerm ("is-" ++ snd qn) [be]
-  | otherwise = error $ "Test for constructor " ++ showQName qn ++
-                        " not yet supported!"
+  | otherwise
+  = BTerm ("is-" ++ transOpName qn) [be]
 
+--- Computes the SMT selector names for a given constructor.
 selectors :: QName -> [String]
-selectors qf | qf == ("Prelude",":") = ["head","tail"]
-             | qf == ("Prelude","Left") = ["left"]
+selectors qf | qf == ("Prelude",":")     = ["head","tail"]
+             | qf == ("Prelude","Left")  = ["left"]
              | qf == ("Prelude","Right") = ["right"]
-             | qf == ("Prelude","Just") = ["just"]
-             | otherwise = error $ "Unknown selectors: " ++ snd qf
+             | qf == ("Prelude","Just")  = ["just"]
+             | otherwise = map (genSelName qf) [1..]
 
 --- Translates a FlatCurry type expression into a corresponding
---- SMT expression. The types `TVar` and `Func` are defined
---- in the SMT prelude which is always loaded.
-type2SMTExp :: TypeExpr -> BoolExp
-type2SMTExp (TVar _) = BTerm "TVar" []
-type2SMTExp (FuncType dom ran) = BTerm "Func" (map type2SMTExp [dom,ran])
-type2SMTExp (TCons (mn,tc) targs)
-  | mn=="Prelude" && tc == "Char"      = BTerm "Int" []
+--- SMT expression.
+--- Polymorphic type variables are translated into the sort `TVar`.
+--- The types `TVar` and `Func` are defined in the SMT prelude
+--- which is always loaded.
+polytype2SMTExp :: TypeExpr -> BoolExp
+polytype2SMTExp = type2SMTExp [] False
+
+--- Translates a FlatCurry type expression into a corresponding
+--- SMT expression. If the first argument is null, then type variables are
+--- translated into the sort `TVar`, otherwise we are in the translation
+--- of the types of selector operations and the first argument
+--- contains the currently defined data types. In this case, type variables
+--- are translated into  `Ti`, but further nesting of the defined data types
+--- are not allowed (since this is not supported by SMT).
+--- The types `TVar` and `Func` are defined in the SMT prelude
+--- which is always loaded.
+type2SMTExp :: [QName] -> Bool -> TypeExpr -> BoolExp
+type2SMTExp tdcl _  (TVar i) =
+  BTerm (if null tdcl then "TVar" else 'T':show i) []
+type2SMTExp tdcl _ (FuncType dom ran) =
+  BTerm "Func" (map (type2SMTExp tdcl True) [dom,ran])
+type2SMTExp tdcl nested (TCons qc@(mn,tc) targs)
+  | mn=="Prelude" && tc == "Char" -- Char is represented as Int:
+  = BTerm "Int" []
   | mn=="Prelude" && tc == "[]" && length targs == 1
-  = BTerm "List" [type2SMTExp (head targs)]
+  = BTerm "List" argtypes
   | mn=="Prelude" && tc == "(,)" && length targs == 2
-  = BTerm "Pair" (map type2SMTExp targs)
-  | mn=="Prelude" = BTerm tc (map type2SMTExp targs)
-  | otherwise = BTerm (mn ++ "." ++ tc) [] -- TODO: complete
+  = BTerm "Pair" argtypes
+  | mn=="Prelude" = BTerm tc argtypes
+  | null tdcl
+  = BTerm (tcons2SMT qc) argtypes
+  | otherwise -- we are in the selector definition of a datatype
+  = if qc `elem` tdcl
+      then if nested
+             then error $ "Type '" ++ showQName qc ++
+                          "': nested recursive types not supported by SMT!"
+             else BTerm (tcons2SMT qc) [] -- TODO: check whether arguments
+                            -- are directly recursive, otherwise emit error
+      else BTerm (tcons2SMT (mn,tc)) argtypes
+ where
+  argtypes = map (type2SMTExp tdcl True) targs
 --type2SMTExp (ForallType _ _) = error "type2SMT: cannot translate ForallType"
+
+--- Translates a FlatCurry type constructor name into SMT.
+tcons2SMT :: QName -> String
+tcons2SMT (mn,tc) = mn ++ "_" ++ tc
+
+----------------------------------------------------------------------------
+--- Translates a type declaration into an SMT datatype declaration.
+tdecl2SMT :: TypeDecl -> String
+tdecl2SMT (TypeSyn tc _ _ _) =
+  error $ "Cannot translate type synonym '" ++ showQName tc ++ "' into SMT!"
+tdecl2SMT (Type tc _ tvars consdecls) =
+  "(declare-datatypes (" ++ unwords (map (\v -> 'T':show v) tvars) ++ ") " ++
+  "((" ++ unwords (tcons2SMT tc : map tconsdecl consdecls) ++ ")))"
+ where
+  tconsdecl (Cons qn _ _ texps) =
+    let cname = transOpName qn
+    in if null texps
+         then cname
+         else "(" ++ unwords (cname : map (texp2sel qn) (zip [1..] texps))
+                  ++ ")"
+
+  texp2sel cname (i,texp) =
+    "(" ++ genSelName cname i ++ " " ++
+      smtBE (type2SMTExp [tc] False texp) ++ ")"
+
+--- Generates the name of the i-th selector for a given constructor.
+genSelName :: QName -> Int -> String
+genSelName qc i = "sel" ++ show i ++ transOpName qc
 
 ----------------------------------------------------------------------------
 
@@ -132,7 +190,7 @@ pat2bool :: TAPattern -> BoolExp
 pat2bool (ALPattern _ l)    = lit2bool l
 pat2bool (APattern ty (qf,_) ps)
   | qf == pre "[]" && null ps
-  = BTerm "as" [BTerm "nil" [], type2SMTExp ty]
+  = BTerm "as" [BTerm "nil" [], polytype2SMTExp ty]
   | otherwise
   = BTerm (transOpName qf) (map (BVar . fst) ps)
 
@@ -153,9 +211,13 @@ transOpName (mn,fn)
 --- Translates an SMT string into qualified FlatCurry name.
 --- Returns Nothing if it was not a qualified name.
 untransOpName :: String -> Maybe QName
-untransOpName s = let (mn,ufn) = break (=='_') s in
- if null ufn
-   then Nothing
-   else Just (mn, tail ufn)
+untransOpName s
+ | "is-" `isPrefixOf` s
+ = Nothing -- selectors are not a qualified name
+ | otherwise
+ = let (mn,ufn) = break (=='_') s
+   in if null ufn
+        then Nothing
+        else Just (mn, tail ufn)
 
 ----------------------------------------------------------------------------

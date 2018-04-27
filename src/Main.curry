@@ -11,7 +11,7 @@ import Directory    ( doesFileExist )
 import FilePath     ( (</>) )
 import IOExts
 import List         ( (\\), elemIndex, find, isPrefixOf, isSuffixOf
-                    , maximum, minimum, splitOn )
+                    , maximum, minimum, splitOn, union )
 import Maybe        ( catMaybes )
 import Profile
 import ReadNumeric  ( readHex )
@@ -51,7 +51,7 @@ testv = test 3
 banner :: String
 banner = unlines [bannerLine,bannerText,bannerLine]
  where
-   bannerText = "Non-Failing Analysis Tool (Version of xx/04/18)"
+   bannerText = "Fail-Free Verification Tool for Curry (Version of 27/04/18)"
    bannerLine = take (length bannerText) (repeat '=')
 
 ---------------------------------------------------------------------------
@@ -101,13 +101,15 @@ verifyNonFailingMod opts modname = do
   pi1 <- getProcessInfos
   printWhenAll opts $ unlines $
     ["ORIGINAL PROGRAM:", line, showCurryModule (unAnnProg prog), line]
-  stats <- proveNonFailingFuncs opts siblingconsinfo tinfo (progFuncs prog) vstate
+  stats <- proveNonFailingFuncs opts siblingconsinfo tinfo (progFuncs prog)
+                                vstate
   pi2 <- getProcessInfos
   let tdiff = maybe 0 id (lookup ElapsedTime pi2) -
               maybe 0 id (lookup ElapsedTime pi1)
-  putStrLn $ "Total verification time  : " ++ show tdiff ++ " msec"
+  when (optTime opts) $ putStrLn $
+    "TOTAL VERIFICATION TIME  : " ++ show tdiff ++ " msec"
   when (optVerb opts > 0 || not (isVerified stats)) $
-    putStrLn (showStats stats)
+    putStr (showStats stats)
  where
   line = take 78 (repeat '-')
 
@@ -156,6 +158,13 @@ isContractOp (_,fn) =
   "'pre"     `isSuffixOf` fn ||
   "'post"    `isSuffixOf` fn
 
+--- Is a function declaration a property?
+isProperty :: TAFuncDecl -> Bool
+isProperty fdecl =
+  resultType (funcType fdecl)
+    `elem` map (\tc -> TCons tc [])
+               [("Test.Prop","Prop"),("Test.EasyCheck","Prop")]
+
 ---------------------------------------------------------------------------
 -- The state of the transformation process contains
 -- * the current assertion
@@ -194,7 +203,7 @@ proveNonFailingFuncs opts siblingconsinfo ti fdecls stats = do
 proveNonFailingFunc :: Options -> ProgInfo [(QName,Int)] -> TransInfo
                     -> IORef VState -> TAFuncDecl -> IO ()
 proveNonFailingFunc opts siblingconsinfo ti vstref fdecl =
-  unless (isContractOp (funcName fdecl)) $ do
+  unless (isContractOp (funcName fdecl) || isProperty fdecl) $ do
     printWhenIntermediate opts $
       "Operation to be analyzed: " ++ snd (funcName fdecl)
     modifyIORef vstref incNumAllInStats
@@ -344,14 +353,14 @@ exp2bool demanded ti (resvar,exp) = case exp of
   AVar _ i -> returnS $ if resvar==i then bTrue
                                      else bEquVar resvar (BVar i)
   ALit _ l -> returnS (bEquVar resvar (lit2bool l))
-  AComb ty _ (qf,_) args ->
+  AComb ty ct (qf,_) args ->
     if qf == ("Prelude","?") && length args == 2
       then exp2bool demanded ti (resvar, AOr ty (args!!0) (args!!1))
       else normalizeArgs args `bindS` \ (bs,nargs) ->
            -- TODO: select from 'bindexps' only demanded argument positions
            mapS (exp2bool (isPrimOp qf || optStrict (toolOpts ti)) ti)
                 bs `bindS` \bindexps ->
-           comb2bool qf nargs bs bindexps
+           comb2bool qf ct nargs bs bindexps
   ALet _ bs e ->
     mapS (exp2bool False ti)
          (map (\ ((i,_),ae) -> (i,ae)) bs) `bindS` \bindexps ->
@@ -371,17 +380,17 @@ exp2bool demanded ti (resvar,exp) = case exp of
   ATyped _ e _ -> exp2bool demanded ti (resvar,e)
   AFree _ _ _ -> error "Free variables not yet supported!"
  where
-   comb2bool qf nargs bs bindexps
+   comb2bool qf ct nargs bs bindexps
     | qf == pre "otherwise"
       -- specific handling for the moment since the front end inserts it
       -- as the last alternative of guarded rules...
     = returnS (bEquVar resvar bTrue)
     | qf == pre "[]"
     = returnS (bEquVar resvar (BTerm "nil" []))
-    | qf == pre ":" && length nargs == 2
+    | ct == ConsCall
     = returnS (Conj (bindexps ++
-                     [bEquVar resvar (BTerm "insert" (map arg2bool nargs))]))
-    -- TODO: translate also other data constructors into SMT
+                     [bEquVar resvar (BTerm (transOpName qf)
+                                            (map arg2bool nargs))]))
     | isPrimOp qf
     = returnS (Conj (bindexps ++
                      [bEquVar resvar (BTerm (transOpName qf)
@@ -389,7 +398,6 @@ exp2bool demanded ti (resvar,exp) = case exp of
     | otherwise -- non-primitive operation: add contract only if demanded
     = preCondExpOf ti qf (map fst bs) `bindS` \precond ->
       postCondExpOf ti qf (map fst bs ++ [resvar]) `bindS` \postcond ->
-      -- TODO: use pre/postcondition only if explicitl
       returnS (Conj (bindexps ++
                      if demanded && optContract (toolOpts ti)
                        then [precond,postcond]
@@ -521,15 +529,16 @@ pred2bool exp = case exp of
  where
   comb2bool qf ar args
     | qf == pre "[]" && ar == 0
-    = returnS (BTerm "as" [BTerm "nil" [], type2SMTExp (annExpr exp)])
+    = returnS (BTerm "as" [BTerm "nil" [], polytype2SMTExp (annExpr exp)])
     | qf == pre "not" && ar == 1
     = pred2bool (head args) `bindS` \barg -> returnS (Not barg)
     | qf == pre "null" && ar == 1
     = let arg = head args
       in pred2bool arg `bindS` \barg ->
          getS `bindS` \tstate ->
-         returnS (bEqu barg (BTerm "as" [BTerm "nil" [],
-                                         type2SMTExp (typeOfVar tstate arg)]))
+         returnS (bEqu barg (BTerm "as"
+                               [BTerm "nil" [],
+                                polytype2SMTExp (typeOfVar tstate arg)]))
     | qf == pre "apply" && ar == 2 && isComb (head args)
     = -- "defunctionalization": if the first argument is a
       -- combination, append the second argument to its arguments
@@ -628,7 +637,14 @@ addSuffix (mn,fn) s = (mn, fn ++ s)
 checkImplicationWithSMT :: Options -> IORef VState -> [(Int,TypeExpr)]
                         -> BoolExp -> BoolExp -> BoolExp -> IO (Maybe Bool)
 checkImplicationWithSMT opts vstref vartypes assertion impbindings imp = do
-  let smt = unlines
+  let usertypes = filter (\ (mn,_) -> mn /= "Prelude")
+                         (foldr union [] (map (tconsOfTypeExpr . snd) vartypes))
+  vst <- readIORef vstref
+  let decls = map (maybe (error "Internal error: some datatype not found!") id)
+                  (map (tdeclOf vst) usertypes)
+      smtdatatypes = unlines [ "; User-defined datatypes:"
+                             , unlines (map tdecl2SMT decls) ]
+      smt = unlines
               [ "; Free variables:"
               , typedVars2SMT vartypes
               , "; Boolean formula of assertion (known properties):"
@@ -651,9 +667,9 @@ checkImplicationWithSMT opts vstref vartypes assertion impbindings imp = do
     unwords (map showQName allqsymbols)
   smtfuncs   <- funcs2SMT vstref allqsymbols
   smtprelude <- readFile (packagePath </> "include" </> "Prelude.smt")
-  let smtinput = smtprelude ++ smtfuncs ++ smt
+  let smtinput = smtprelude ++ smtdatatypes ++ smtfuncs ++ smt
   printWhenAll opts $ unlines ["SMT SCRIPT:", line, smtinput, line]
-  printWhenAll opts $ "CALLING Z3..."
+  printWhenAll opts $ "CALLING Z3 (with options: -smt2 -T:5)..."
   (ecode,out,err) <- evalCmd "z3" ["-smt2", "-in", "-T:5"] smtinput
   when (ecode>0) $ printWhenAll opts $ "EXIT CODE: " ++ show ecode
   printWhenAll opts $ "RESULT:\n" ++ out
@@ -676,7 +692,14 @@ typedVars2SMT :: [(Int,TypeExpr)] -> String
 typedVars2SMT tvars = unlines (map tvar2SMT tvars)
  where
   tvar2SMT (i,te) = withBracket $ unwords
-    ["declare-const", smtBE (BVar i), smtBE (type2SMTExp te)]
+    ["declare-const", smtBE (BVar i), smtBE (polytype2SMTExp te)]
+
+-- Gets all type constructors of a type expression.
+tconsOfTypeExpr :: TypeExpr -> [QName]
+tconsOfTypeExpr (TVar _) = []
+tconsOfTypeExpr (FuncType a b) =  union (tconsOfTypeExpr a) (tconsOfTypeExpr b)
+tconsOfTypeExpr (TCons qName texps) =
+  foldr union [qName] (map tconsOfTypeExpr texps)
 
 ---------------------------------------------------------------------------
 -- Auxiliaries:
@@ -720,7 +743,12 @@ Verified system libraries:
 - AnsiCodes
 - Either
 - ErrorState
+- Integer
 - Maybe
 - State
+- Nat --> paper
+- ShowS
+- Socket
+- Array --> paper
 
 -}
