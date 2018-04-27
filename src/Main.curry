@@ -227,44 +227,41 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
   -- verify only if the precondition is different from always failing:
   unless (precondformula == bFalse) $ proveNonFailExp s2 rhs
  where
-  proveNonFailExp pts exp = case exp of
-    AComb ty ct (qf,_) args ->
-      if qf == ("Prelude","?") && length args == 2
-        then proveNonFailExp pts (AOr ty (args!!0) (args!!1))
-        else do
-          mapIO_ (proveNonFailExp pts) args
-          when (isCombTypeFuncPartCall ct) $
-            let qnpre = addSuffix qf "'nonfail"
-            in maybe done -- h.o. call nonfailing if op. has no non-fail cond.
-                 (\_ -> do
-                   let reason = "due to call '" ++ ppTAExpr exp ++ "'"
-                   modifyIORef vstref (addFailedFuncToStats fn reason)
-                   printWhenIntermediate opts $
-                     fn ++ ": POSSIBLY FAILING CALL OF '" ++ snd qf ++ "'")
-                 (find (\fd -> funcName fd == qnpre) (nfConds ti))
-          when (ct==FuncCall) $ do
-            printWhenIntermediate opts $ "Analyzing call to " ++ snd qf
-            let ((bs,_)    ,pts1) = normalizeArgs args pts
-                (bindexps  ,pts2) = mapS (exp2bool True ti) bs pts1
-                (nfcondcall,pts3) = nonfailPreCondExpOf ti qf (map fst bs) pts2
-            -- TODO: select from 'bindexps' only demanded argument positions
-            valid <- if nfcondcall == bTrue
-                       then return (Just True) -- true non-fail cond. is valid
-                       else do
-                         modifyIORef vstref incFailTestInStats
-                         checkImplicationWithSMT opts vstref (varTypes pts3)
-                              (preCond pts) (Conj bindexps) nfcondcall
-            if valid == Just True
-              then do
-                printWhenIntermediate opts $
-                  fn ++ ": NON-FAILING CALL OF '" ++ snd qf ++ "'"
-              else do
-                let reason = if valid == Nothing
-                               then "due to SMT error"
-                               else "due to call '" ++ ppTAExpr exp ++ "'"
-                modifyIORef vstref (addFailedFuncToStats fn reason)
-                printWhenIntermediate opts $
-                  fn ++ ": POSSIBLY FAILING CALL OF '" ++ snd qf ++ "'"
+  proveNonFailExp pts exp = case simpExpr exp of
+    AComb ty ct (qf,_) args -> do
+      mapIO_ (proveNonFailExp pts) args
+      when (isCombTypeFuncPartCall ct) $
+        let qnpre = addSuffix qf "'nonfail"
+        in maybe done -- h.o. call nonfailing if op. has no non-fail cond.
+             (\_ -> do
+               let reason = "due to call '" ++ ppTAExpr exp ++ "'"
+               modifyIORef vstref (addFailedFuncToStats fn reason)
+               printWhenIntermediate opts $
+                 fn ++ ": POSSIBLY FAILING CALL OF '" ++ snd qf ++ "'")
+             (find (\fd -> funcName fd == qnpre) (nfConds ti))
+      when (ct==FuncCall) $ do
+        printWhenIntermediate opts $ "Analyzing call to " ++ snd qf
+        let ((bs,_)    ,pts1) = normalizeArgs args pts
+            (bindexps  ,pts2) = mapS (exp2bool True ti) bs pts1
+            (nfcondcall,pts3) = nonfailPreCondExpOf ti qf (map fst bs) pts2
+        -- TODO: select from 'bindexps' only demanded argument positions
+        valid <- if nfcondcall == bTrue
+                   then return (Just True) -- true non-fail cond. is valid
+                   else do
+                     modifyIORef vstref incFailTestInStats
+                     checkImplicationWithSMT opts vstref (varTypes pts3)
+                          (preCond pts) (Conj bindexps) nfcondcall
+        if valid == Just True
+          then do
+            printWhenIntermediate opts $
+              fn ++ ": NON-FAILING CALL OF '" ++ snd qf ++ "'"
+          else do
+            let reason = if valid == Nothing
+                           then "due to SMT error"
+                           else "due to call '" ++ ppTAExpr exp ++ "'"
+            modifyIORef vstref (addFailedFuncToStats fn reason)
+            printWhenIntermediate opts $
+              fn ++ ": POSSIBLY FAILING CALL OF '" ++ snd qf ++ "'"
     ACase _ _ e brs -> do
       proveNonFailExp pts e
       maybe
@@ -339,6 +336,18 @@ missingConsInBranch siblingconsinfo
       branchcons = map (patCons . branchPattern) brs
   in filter ((`notElem` branchcons) . fst) othercons
 
+-- Simplifies a FlatCurry expression (only at the top-level!)
+-- by considering the semantics of some predefined operations.
+simpExpr :: TAExpr -> TAExpr
+simpExpr exp = case exp of
+  AComb ty FuncCall (qf,_) args ->
+    if qf == pre "?"
+      then AOr ty (args!!0) (args!!1)
+      else if qf == pre "ord" || qf == pre "id" -- ops without preconditions
+             then head args -- note: Char is implemented as Int in SMT
+             else exp
+  _ -> exp
+
 -- Translates a FlatCurry expression to a Boolean formula representing
 -- the postcondition assertion by generating an equation
 -- between the argument variable (represented by its index in the first
@@ -349,18 +358,16 @@ missingConsInBranch siblingconsinfo
 -- If the first argument is `False`, the expression is not strictly demanded,
 -- i.e., possible contracts of it (if it is a function call) are ignored.
 exp2bool :: Bool -> TransInfo -> (Int,TAExpr) -> State TransState BoolExp
-exp2bool demanded ti (resvar,exp) = case exp of
+exp2bool demanded ti (resvar,exp) = case simpExpr exp of
   AVar _ i -> returnS $ if resvar==i then bTrue
                                      else bEquVar resvar (BVar i)
   ALit _ l -> returnS (bEquVar resvar (lit2bool l))
   AComb ty ct (qf,_) args ->
-    if qf == ("Prelude","?") && length args == 2
-      then exp2bool demanded ti (resvar, AOr ty (args!!0) (args!!1))
-      else normalizeArgs args `bindS` \ (bs,nargs) ->
-           -- TODO: select from 'bindexps' only demanded argument positions
-           mapS (exp2bool (isPrimOp qf || optStrict (toolOpts ti)) ti)
-                bs `bindS` \bindexps ->
-           comb2bool qf ct nargs bs bindexps
+    normalizeArgs args `bindS` \ (bs,nargs) ->
+    -- TODO: select from 'bindexps' only demanded argument positions
+    mapS (exp2bool (isPrimOp qf || optStrict (toolOpts ti)) ti)
+         bs `bindS` \bindexps ->
+    comb2bool qf ct nargs bs bindexps
   ALet _ bs e ->
     mapS (exp2bool False ti)
          (map (\ ((i,_),ae) -> (i,ae)) bs) `bindS` \bindexps ->
@@ -521,7 +528,7 @@ applyFunc fdecl args s0 =
 -- Calls to user-defined functions are replaced by the first argument
 -- (which might be true or false).
 pred2bool :: TAExpr -> State TransState BoolExp
-pred2bool exp = case exp of
+pred2bool exp = case simpExpr exp of
   AVar _ i              -> returnS (BVar i)
   ALit _ l              -> returnS (lit2bool l)
   AComb _ _ (qf,_) args -> comb2bool qf (length args) args
@@ -730,10 +737,7 @@ testBoolCase brs =
 
 Still to be done:
 
-- translate datatypes (with test functions!)
-- translate higher-order
 - consider encapsulated search
-- consider postconditions to verify, e.g., List.splitOn
 - type-specialize polymorphic operations when axiomatizing them in SMT
 
 
@@ -750,5 +754,6 @@ Verified system libraries:
 - ShowS
 - Socket
 - Array --> paper
+- Char --> paper
 
 -}
