@@ -1,10 +1,13 @@
 failfree: A tool for verifying fail-free Curry programs
 =======================================================
 
-Objective: verify that all operations are non-failing, i.e.,
-does not result in a failure, if they are called with
-the correct arguments which satisfy the non-failing precondition
+Basic idea of the tool:
+-----------------------
 
+The objective is this tool is to verify that all operations are non-failing,
+i.e., their evaluation does not result in a failure, if they are called with
+the correct arguments which satisfy the non-failing precondition of
+the operation.
 
 Example:
 
@@ -18,23 +21,23 @@ i.e., it is still allowed to use `head` in a logical setting.
 However, it can be used to verify that the following operation
 is non-failing:
 
-    readLine = do
-      putStr "Input a non-empty string:"
+    readCommand = do
+      putStr "Input a command:"
       s <- getLine
-      if null s then readLine
-                else do putStr "First char: "
-                        putStrLn (head s)
+      let ws = words s
+      if null ws then readCommand
+                 else processCommand (head ws) (tail ws)
 
-Techniques to verify non-failing properties:
+The following techniques to verify non-failing properties are used:
 
 1. Test whether the operation is pattern-completely defined
    (i.e., branches on all patterns in all or-branches)
-   for all inputs satisfying the non-failing precondition(!).
-   If not -> possibly failing
+   for all inputs satisfying the non-failing precondition.
+   If this is not the case, the operation is possibly failing.
 
 2. Test whether the operations called in the right-hand side
    are used with satisfied non-failing preconditions
-   for all inputs satisfying the non-failing precondition(!).
+   for all inputs satisfying the non-failing precondition.
     
 3. Test whether a call to `Prelude.fail` is unreachable, e.g., in
     
@@ -59,9 +62,9 @@ this could also avoid the occurrence of run-time errors:
                         putStrLn (head s)
 
 If `error` is considered as an always failing operation,
-`readline` cannot be verified as non-failing.
+`readLine` cannot be verified as non-failing.
 However, this requires also a careful analysis
-of all external operations (like `div` or `readFile`)
+of all external operations (like `readFile`)
 which might raise exceptions.
 
 ---------------------------------------------------------------------------
@@ -95,3 +98,16 @@ Notes:
 - Operations defining contracts and properties are not verified.
 
 ---------------------------------------------------------------------------
+
+Directories of the package:
+---------------------------
+
+* examples: some examples (and test suite)
+
+* include: an include file for the SMT solver and non-fail conditions
+  for various system modules
+
+* src: source code of the implementation
+
+---------------------------------------------------------------------------
+
