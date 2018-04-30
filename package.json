@@ -7,9 +7,9 @@
     "license": "BSD-3-Clause",
     "licenseFile": "LICENSE",
     "dependencies": {
-        "cass-analysis": ">= 0.0.1",
-        "cass"         : ">= 0.0.1",
-        "flatcurry"    : ">= 1.0.0",
+        "cass-analysis"      : ">= 0.0.1",
+        "cass"               : ">= 0.0.1",
+        "flatcurry"          : ">= 1.0.0",
         "flatcurry-annotated": ">= 1.0.0",
         "showflatcurry"      : ">= 0.0.1"
      },

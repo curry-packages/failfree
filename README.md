@@ -40,13 +40,15 @@ The following techniques to verify non-failing properties are used:
    for all inputs satisfying the non-failing precondition.
     
 3. Test whether a call to `Prelude.fail` is unreachable, e.g., in
-    
-     abs x = if x>=0 then x else if x<0 then (0 - x) else fail
+
+       abs x = if x>=0 then x
+                       else if x<0 then (0 - x)
+                                   else fail
 
    Note that this might be the result translating the following definition:
 
-     abs x | x>=0 = x
-           | x<0  = 0 - x
+       abs x | x>=0 = x
+             | x<0  = 0 - x
 
    This requires SMT solving...
 
@@ -54,7 +56,7 @@ The following techniques to verify non-failing properties are used:
 Depending on the state of the operation `error`,
 this could also avoid the occurrence of run-time errors:
 
-    readLine :- do
+    readLine = do
       putStr "Input a non-empty string:"
       s <- getLine
       if null s then error "Empty input!"
@@ -83,8 +85,8 @@ Current restrictions:
 Notes:
 ------
 
-- Contracts and nonfail specifications can also be stored in a separate
-  file. When checking a module `m`, if there is a Curry module `m_SPEC`
+- Contracts and nonfail specifications can also be stored in separate
+  files. When checking a module `m`, if there is a Curry module `m_SPEC`
   in the load path, the contents of `m_SPEC` is added to `m` before
   it is checked.
 

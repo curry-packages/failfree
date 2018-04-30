@@ -750,10 +750,10 @@ Verified system libraries:
 - Integer
 - Maybe
 - State
-- Nat --> paper
+- Nat
 - ShowS
 - Socket
-- Array --> paper
-- Char --> paper
+- Array
+- Char
 
 -}
