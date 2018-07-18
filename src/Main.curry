@@ -349,8 +349,7 @@ simpExpr exp = case exp of
   _ -> exp
 
 -- Translates a FlatCurry expression to a Boolean formula representing
--- the postcondition assertion by generating an equation
--- between the argument variable (represented by its index in the first
+-- the between a variable (represented by its index in the first
 -- component) and the translated expression (second component).
 -- The translated expression is normalized when necessary.
 -- For this purpose, a "fresh variable index" is passed as a state.
@@ -365,8 +364,8 @@ exp2bool demanded ti (resvar,exp) = case simpExpr exp of
   AComb ty ct (qf,_) args ->
     normalizeArgs args `bindS` \ (bs,nargs) ->
     -- TODO: select from 'bindexps' only demanded argument positions
-    mapS (exp2bool (isPrimOp qf || optStrict (toolOpts ti)) ti)
-         bs `bindS` \bindexps ->
+    mapS (exp2bool (isPrimOp qf || optStrict (toolOpts ti)) ti) bs
+         `bindS` \bindexps ->
     comb2bool qf ct nargs bs bindexps
   ALet _ bs e ->
     mapS (exp2bool False ti)
@@ -398,6 +397,9 @@ exp2bool demanded ti (resvar,exp) = case simpExpr exp of
     = returnS (Conj (bindexps ++
                      [bEquVar resvar (BTerm (transOpName qf)
                                             (map arg2bool nargs))]))
+    | qf == pre "apply"
+    = -- cannot translate h.o. apply: ignore it
+      returnS bTrue
     | isPrimOp qf
     = returnS (Conj (bindexps ++
                      [bEquVar resvar (BTerm (transOpName qf)
