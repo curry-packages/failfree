@@ -8,8 +8,8 @@
 module Curry2SMT where
 
 import IOExts
-import List         ( isPrefixOf )
-import Maybe        ( fromJust, fromMaybe )
+import Data.List         ( isPrefixOf )
+import Data.Maybe        ( fromJust, fromMaybe )
 
 -- Imports from dependencies:
 import FlatCurry.Annotated.Goodies ( argTypes, resultType )
@@ -78,7 +78,7 @@ exp2SMT lhs exp = case exp of
     BTerm "ite" [patternTest p be, --bEqu be (pat2bool p),
                  branch2SMT be p e,
                  branches2SMT be brs]
-  
+
   branch2SMT _  (ALPattern _ _) e = exp2SMT lhs e
   branch2SMT be (APattern _ (qf,_) ps) e = case ps of
     [] -> exp2SMT lhs e

@@ -11,10 +11,10 @@ module ToolOptions
   )
  where
 
-import Distribution      ( stripCurrySuffix )
-import GetOpt
-import ReadNumeric       ( readNat )
-import System            ( exitWith )
+import System.Console.GetOpt
+import System.Process        ( exitWith )
+import Numeric               ( readNat )
+import Distribution          ( stripCurrySuffix )
 
 data Options = Options
   { optVerb    :: Int    -- verbosity (0: quiet, 1: status, 2: interm, 3: all)
@@ -82,10 +82,9 @@ options =
   ]
  where
   safeReadNat opttrans s opts =
-   let numError = error "Illegal number argument (try `-h' for help)"
-   in maybe numError
-            (\ (n,rs) -> if null rs then opttrans n opts else numError)
-            (readNat s)
+   case readNat s of
+     [(n,"")] -> opttrans n opts
+     _        -> error "Illegal number argument (try `-h' for help)"
 
   checkVerb n opts = if n>=0 && n<4
                      then opts { optVerb = n }

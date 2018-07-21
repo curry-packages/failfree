@@ -4,10 +4,9 @@
 --- @version April 2018
 -----------------------------------------------------------------------------
 
-module PatternAnalysis
- where
+module PatternAnalysis where
 
-import List(delete)
+import Data.List               (delete)
 
 import Analysis.ProgInfo
 import Analysis.Types
@@ -75,4 +74,3 @@ combineAndResults :: Completeness -> Completeness -> Completeness
 combineAndResults Complete     Complete     = Complete
 combineAndResults Complete     InComplete   = InComplete
 combineAndResults InComplete   _            = InComplete
-

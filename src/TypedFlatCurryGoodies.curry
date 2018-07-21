@@ -7,23 +7,23 @@
 
 module TypedFlatCurryGoodies where
 
-import Directory    ( doesFileExist )
-import Distribution ( getLoadPathForModule, lookupModuleSource
-                    , stripCurrySuffix )
-import FilePath     ( (</>) )
+import System.Directory ( doesFileExist )
+import System.FilePath  ( (</>) )
+import System.Process   ( exitWith )
+import Data.List        ( find, maximum, nub, union )
+import Data.Maybe       ( fromJust )
 import IOExts
-import List         ( find, maximum, nub, union )
-import Maybe        ( fromJust )
-import Pretty       ( pretty )
-import System       ( exitWith )
+import Distribution     ( getLoadPathForModule, lookupModuleSource
+                        , stripCurrySuffix )
 
 -- Imports from dependencies:
---import FlatCurry.Annotated.Files   ( readTypedFlatCurry )
+import FlatCurry.Typed.Files   ( readTypedFlatCurryAsAnnotated )
 import FlatCurry.Annotated.Goodies
 import FlatCurry.Annotated.Pretty        ( ppExp )
 import FlatCurry.Annotated.Types
 import FlatCurry.Annotated.TypeInference ( inferProg )
 import FlatCurry.Files
+import Text.Pretty       ( showWidth )
 
 import PackageConfig ( packagePath )
 import ToolOptions
@@ -37,16 +37,6 @@ type TAExpr       = AExpr       TypeExpr
 type TABranchExpr = ABranchExpr TypeExpr
 type TAPattern    = APattern    TypeExpr
 
-----------------------------------------------------------------------------
---- Reads a typed FlatCurry program or exits with a failure message
---- in case of some typing error.
-readTypedFlatCurry :: String -> IO TAProg
-readTypedFlatCurry mname = do
-  prog <- readFlatCurry mname
-  inferProg prog >>=
-    either (\e -> putStrLn ("Error during FlatCurry type inference:\n" ++ e) >>
-                  exitWith 1)
-           return
 
 --- Reads a typed FlatCurry program together with a possible `_SPEC` program
 --- (containing further contracts) or exits with a failure message
@@ -55,7 +45,7 @@ readTypedFlatCurryWithSpec :: Options -> String -> IO TAProg
 readTypedFlatCurryWithSpec opts mname = do
   whenStatus opts $ putStr $
     "Loading typed FlatCurry program '" ++ mname ++ "'..."
-  prog     <- readTypedFlatCurry mname
+  prog     <- readTypedFlatCurryAsAnnotated mname
   loadpath <- getLoadPathForModule specName
   mbspec   <- lookupModuleSource (loadpath ++ [packagePath </> "include"])
                                  specName
@@ -64,7 +54,7 @@ readTypedFlatCurryWithSpec opts mname = do
            let specpath = stripCurrySuffix specname
            when (optVerb opts > 0) $ putStr $
              "'" ++ (if optVerb opts > 1 then specpath else specName) ++ "'..."
-           specprog <- readTypedFlatCurry specpath
+           specprog <- readTypedFlatCurryAsAnnotated specpath
            whenStatus opts $ putStrLn "done"
            return (unionTAProg prog (rnmProg mname specprog))
         )
@@ -105,7 +95,7 @@ getAllFunctions vstref currfuncs newfuns = do
     | otherwise -- we must load a new module
     = do let mname = fst newfun
          putStrLn $ "Loading module '" ++ mname ++ "' for '"++ snd newfun ++"'"
-         newmod <- readTypedFlatCurry mname
+         newmod <- readTypedFlatCurryAsAnnotated mname
          modifyIORef vstref (addProgToState newmod)
          getAllFunctions vstref currfuncs (newfun:newfuncs)
 
@@ -140,7 +130,7 @@ ndExpr = trExpr (\_ _ -> False)
 
 --- Pretty prints an expression.
 ppTAExpr :: TAExpr -> String
-ppTAExpr e = pretty 200 (ppExp e)
+ppTAExpr e = showWidth 200 (ppExp e)
 
 --- Sets the top annotation of a pattern.
 setAnnPattern :: TypeExpr -> TAPattern -> TAPattern
@@ -216,7 +206,7 @@ etaExpandFuncDecl (AFunc qn ar vis texp (ARule tr args rhs)) =
       FuncPartCall m -> applyExp (AComb (dropArgTypes 1 te)
                                         (if m==1 then FuncCall
                                                  else FuncPartCall (m-1))
-                                        (qf,qt) 
+                                        (qf,qt)
                                         (cargs ++ [v1]))
                                  vs
       _ -> applyExp (AComb (dropArgTypes 1 te) FuncCall
@@ -232,7 +222,7 @@ etaExpandFuncDecl (AFunc qn ar vis texp (ARule tr args rhs)) =
                                        [exp, v1]) vs
     ALit   _  _     -> error "etaExpandFuncDecl: cannot apply literal"
    where
-    adjustType ty = dropArgTypes (length vars) ty 
+    adjustType ty = dropArgTypes (length vars) ty
 
   --- Remove the given number of argument types from a (nested) functional type.
   dropArgTypes n ty

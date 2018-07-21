@@ -1,6 +1,6 @@
 module VerifierState where
 
-import List ( find )
+import Data.List ( find )
 
 import FlatCurry.Annotated.Types
 import FlatCurry.Annotated.Goodies
