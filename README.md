@@ -5,14 +5,13 @@ Basic idea of the tool:
 -----------------------
 
 The objective is this tool is to verify that all operations are non-failing,
-i.e., their evaluation does not result in a failure, if they are called with
-the correct arguments which satisfy the non-failing precondition of
-the operation.
+i.e., their evaluation does not result in a failure, if they are called
+with arguments satisfying the non-failing precondition of the operation.
 
 Example:
 
     -- The operation `head` does not fail if this precondition is satisfied:
-    head_nonfail xs = not (null xs)
+    head'nonfail xs = not (null xs)
     
     head (x:xs) = x
 
@@ -28,7 +27,9 @@ is non-failing:
       if null ws then readCommand
                  else processCommand (head ws) (tail ws)
 
-The following techniques to verify non-failing properties are used:
+A detailed description can be found in the
+[PPDP 2018 paper](https://doi.org/10.1145/3236950.3236957).
+Basically, the following techniques are used to verify non-failing properties:
 
 1. Test whether the operation is pattern-completely defined
    (i.e., branches on all patterns in all or-branches)
@@ -39,18 +40,18 @@ The following techniques to verify non-failing properties are used:
    are used with satisfied non-failing preconditions
    for all inputs satisfying the non-failing precondition.
     
-3. Test whether a call to `Prelude.fail` is unreachable, e.g., in
+3. Test whether a call to `Prelude.failed` is unreachable, e.g., in
 
        abs x = if x>=0 then x
                        else if x<0 then (0 - x)
-                                   else fail
+                                   else failed
 
    Note that this might be the result translating the following definition:
 
        abs x | x>=0 = x
              | x<0  = 0 - x
 
-   This requires SMT solving...
+   This requires reasoning on integer arithmetic, as supported by SMT solvers.
 
 
 Depending on the state of the operation `error`,
@@ -63,7 +64,8 @@ this could also avoid the occurrence of run-time errors:
                 else do putStr "First char: "
                         putStrLn (head s)
 
-If `error` is considered as an always failing operation,
+If `error` is considered as an always failing operation
+(which is done if the option `--error` is set),
 `readLine` cannot be verified as non-failing.
 However, this requires also a careful analysis
 of all external operations (like `readFile`)
@@ -74,7 +76,7 @@ which might raise exceptions.
 Current restrictions:
 ---------------------
 
-- The nonfail specification should be a Boolean formula, i.e.,
+- The non-fail condition should be a Boolean formula, i.e.,
   not a function with pattern matching or local definitions.
   Furthermore, it should be a first-order equation, i.e.,
   in eta-expanded form.
@@ -85,16 +87,16 @@ Current restrictions:
 Notes:
 ------
 
-- Contracts and nonfail specifications can also be stored in separate
+- Contracts and non-fail conditions can also be stored in separate
   files. When checking a module `m`, if there is a Curry module `m_SPEC`
   in the load path, the contents of `m_SPEC` is added to `m` before
   it is checked.
 
-- nonfail specifications for operators can be also specified by
-  operations named by `op_xh1...hn'`, where
-  each `hi` is a two digit hexadecimal number, into the name
-  of corresponding to the ord values of `h1...hn`.
-  For instance, the nonfail specification for `&>` can be named
+- Non-fail conditions for operators can also be specified by
+  operations named by `op_xh1...hn'`, where each
+  `hi` is a two digit hexadecimal number and the name
+  of the operator corresponds to the ord values of `h1...hn`.
+  For instance, the non-fail condition for `&>` can be named
   `op_x263E'nonfail`.
 
 - Operations defining contracts and properties are not verified.

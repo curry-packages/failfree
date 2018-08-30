@@ -2,7 +2,7 @@
 --- The options of the non-failing analysis tool.
 ---
 --- @author Michael Hanus
---- @version April 2018
+--- @version August 2018
 -------------------------------------------------------------------------
 
 module ToolOptions
@@ -78,7 +78,7 @@ options =
            "check contracts w.r.t. strict evaluation strategy"
   , Option "t" ["time"]
            (NoArg (\opts -> opts { optTime = True }))
-           "check contracts w.r.t. strict evaluation strategy"
+           "show total verification time for each module"
   ]
  where
   safeReadNat opttrans s opts =

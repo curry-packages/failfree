@@ -2,7 +2,7 @@
 --- A tool to verify non-failure properties of Curry operations.
 ---
 --- @author  Michael Hanus
---- @version April 2018
+--- @version August 2018
 ---------------------------------------------------------------------------
 
 module Main where
@@ -39,6 +39,8 @@ import ToolOptions
 import TypedFlatCurryGoodies
 import VerifierState
 
+------------------------------------------------------------------------
+-- To support testing:
 
 test :: Int -> String -> IO ()
 test v = verifyNonFailingMod defaultOptions { optVerb = v }
@@ -51,7 +53,7 @@ testv = test 3
 banner :: String
 banner = unlines [bannerLine,bannerText,bannerLine]
  where
-   bannerText = "Fail-Free Verification Tool for Curry (Version of 27/04/18)"
+   bannerText = "Fail-Free Verification Tool for Curry (Version of 30/08/18)"
    bannerLine = take (length bannerText) (repeat '=')
 
 ---------------------------------------------------------------------------
