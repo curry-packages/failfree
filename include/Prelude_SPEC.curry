@@ -30,6 +30,19 @@ op_x263E'nonfail x _ = x
 op_x2121'nonfail :: [a] -> Int -> Bool
 op_x2121'nonfail xs n = n >= 0 && length (take (n+1) xs) == n+1
 
+showTuple'nonfail :: [ShowS] -> String -> Bool
+showTuple'nonfail xs _ = not (null xs)
+
+-- Non-failure condition for '_impl#divMod#Prelude.Integral#Prelude.Int',
+-- i.e., operation `divMod` in instance `Integral Int`.
+op_x5F696D706C236469764D6F64235072656C7564652E496E74656772616C235072656C7564652E496E74'nonfail :: Int -> Int -> Bool
+op_x5F696D706C236469764D6F64235072656C7564652E496E74656772616C235072656C7564652E496E74'nonfail x y = y /= 0
+
+-- Non-failure condition for '_impl#quotRem#Prelude.Integral#Prelude.Int',
+-- i.e., operation `quotRem` in instance `Integral Int`.
+op_x5F696D706C2371756F7452656D235072656C7564652E496E74656772616C235072656C7564652E496E74'nonfail :: Int -> Int -> Bool
+op_x5F696D706C2371756F7452656D235072656C7564652E496E74656772616C235072656C7564652E496E74'nonfail x y = y /= 0
+
 ------------------------------------------------------------------------------
 -- External operations:
 
@@ -53,26 +66,23 @@ op_x3D3A3C3C3D'nonfail _ _ = False
 op_x26'nonfail :: Bool -> Bool -> Bool
 op_x26'nonfail x y = x && y
 
-chr'nonfail :: Int -> Bool
-chr'nonfail n = n>=0
+div_'nonfail :: Int -> Int -> Bool
+div_'nonfail x y = y /= 0
 
-div'nonfail :: Int -> Int -> Bool
-div'nonfail x y = y/=0
+mod_'nonfail :: Int -> Int -> Bool
+mod_'nonfail x y = y /= 0
 
-mod'nonfail :: Int -> Int -> Bool
-mod'nonfail x y = y/=0
+divMod_'nonfail :: Int -> Int -> Bool
+divMod_'nonfail x y = y /= 0
 
-divMod'nonfail :: Int -> Int -> Bool
-divMod'nonfail x y = y/=0
+quot_'nonfail :: Int -> Int -> Bool
+quot_'nonfail x y = y /= 0
 
-quot'nonfail :: Int -> Int -> Bool
-quot'nonfail x y = y/=0
+rem_'nonfail :: Int -> Int -> Bool
+rem_'nonfail x y = y /= 0
 
-rem'nonfail :: Int -> Int -> Bool
-rem'nonfail x y = y/=0
-
-quotRem'nonfail :: Int -> Int -> Bool
-quotRem'nonfail x y = y/=0
+quotRem_'nonfail :: Int -> Int -> Bool
+quotRem_'nonfail x y = y /= 0
 
 ------------------------------------------------------------------------------
 

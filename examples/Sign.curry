@@ -7,6 +7,7 @@ sig x | x>0  = 1
 
 -- It must be proved that the guards are complete since the definition
 -- above is translated into the following definition:
+sigif :: Int -> Int
 sigif x = if x>0
             then 1
             else if x==0 then 0

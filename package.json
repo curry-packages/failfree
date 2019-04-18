@@ -1,21 +1,28 @@
 {
     "name": "failfree",
-    "version": "0.0.1",
+    "version": "1.0.0",
     "author": "Michael Hanus <mh@informatik.uni-kiel.de>",
     "synopsis": "A tool to verify whether a Curry program executes without failures",
     "category": [ "Programming", "Analysis", "Verification" ],
     "license": "BSD-3-Clause",
     "licenseFile": "LICENSE",
     "dependencies": {
+        "base"               : ">= 1.0.0, < 2.0.0",
         "cass-analysis"      : ">= 0.0.1",
         "cass"               : ">= 0.0.1",
+        "contracts"          : ">= 0.0.1",
+        "currypath"          : ">= 0.0.1",
+        "execpath"           : ">= 0.0.1",
+        "finite-map"         : ">= 0.0.1",
         "flatcurry"          : ">= 1.0.0",
         "flatcurry-annotated": ">= 1.0.0",
-        "showflatcurry"      : ">= 0.0.1"
+        "profiling"          : ">= 1.0.0",
+        "showflatcurry"      : ">= 0.0.1",
+        "wl-pprint"          : ">= 0.0.1"
      },
     "compilerCompatibility": {
-        "pakcs": ">= 1.14.0, < 2.0.0",
-        "kics2": ">= 0.5.0, < 2.0.0"
+        "pakcs": ">= 2.0.0, < 3.0.0",
+        "kics2": ">= 2.0.0, < 3.0.0"
     },
     "configModule": "PackageConfig",
     "executable": {

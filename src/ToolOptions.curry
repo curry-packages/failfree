@@ -2,7 +2,7 @@
 --- The options of the non-failing analysis tool.
 ---
 --- @author Michael Hanus
---- @version August 2018
+--- @version March 2019
 -------------------------------------------------------------------------
 
 module ToolOptions
@@ -11,14 +11,17 @@ module ToolOptions
   )
  where
 
-import Distribution      ( stripCurrySuffix )
 import GetOpt
 import ReadNumeric       ( readNat )
 import System            ( exitWith )
 
+import System.CurryPath  ( stripCurrySuffix )
+
+
 data Options = Options
   { optVerb    :: Int    -- verbosity (0: quiet, 1: status, 2: interm, 3: all)
   , optHelp    :: Bool   -- if help info should be printed
+  , optName    :: String -- show only the name of a nonfail condition
   , optError   :: Bool   -- should `error` be considered as a failing function?
   , optRec     :: Bool   -- recursive, i.e., verify imported modules first?
   , optContract:: Bool   -- consider pre/postconditions for verification?
@@ -32,7 +35,7 @@ data Options = Options
   }
 
 defaultOptions :: Options
-defaultOptions = Options 1 False False False False False False
+defaultOptions = Options 1 False "" False False False False False
 
 --- Process the actual command line argument and return the options
 --- and the name of the main program.
@@ -58,6 +61,9 @@ options =
   [ Option "h?" ["help"]
            (NoArg (\opts -> opts { optHelp = True }))
            "print help and exit"
+  , Option "n" ["name"]
+            (ReqArg (\s opts -> opts { optName = s }) "<f>")
+            "show only the name of a non-fail condition"
   , Option "q" ["quiet"]
            (NoArg (\opts -> opts { optVerb = 0 }))
            "run quietly (no output, only exit code)"
@@ -72,7 +78,7 @@ options =
            "recursive, i.e., verify imported modules first"
   , Option "c" ["contract"]
             (NoArg (\opts -> opts { optContract = True }))
-           "consider contract (pre/postcondition) for verification"
+           "consider contracts (pre/postcondition) for verification"
   , Option "s" ["strict"]
            (NoArg (\opts -> opts { optStrict = True }))
            "check contracts w.r.t. strict evaluation strategy"

@@ -2,7 +2,7 @@
 --- A tool to verify non-failure properties of Curry operations.
 ---
 --- @author  Michael Hanus
---- @version August 2018
+--- @version April 2019
 ---------------------------------------------------------------------------
 
 module Main where
@@ -11,32 +11,36 @@ import Directory    ( doesFileExist )
 import FilePath     ( (</>) )
 import IOExts
 import List         ( (\\), elemIndex, find, isPrefixOf, isSuffixOf
-                    , maximum, minimum, splitOn, union )
+                    , maximum, minimum, partition, splitOn, union )
 import Maybe        ( catMaybes )
-import Profile
-import ReadNumeric  ( readHex )
 import State
 import System
+import Unsafe
 
 -- Imports from dependencies:
 import Analysis.ProgInfo
 import Analysis.TotallyDefined ( siblingCons )
 import Analysis.Types
+import Contract.Names
 import CASS.Server             ( analyzeGeneric, analyzePublic )
+import Debug.Profile
 import FlatCurry.Annotated.Types
+import FlatCurry.Annotated.TypeSubst
 import FlatCurry.Files
 import FlatCurry.Types
 import qualified FlatCurry.Goodies as FCG
 import FlatCurry.Annotated.Goodies
-import ShowFlatCurry                     ( showCurryModule )
+import ShowFlatCurry           ( showCurryModule )
+import System.Path             ( fileInPath )
 
 -- Imports from package modules:
-import BoolExp
+import ESMT
 import Curry2SMT
 import PackageConfig ( packagePath )
 import PatternAnalysis
 import ToolOptions
 import TypedFlatCurryGoodies
+import SimpFlatCurry
 import VerifierState
 
 ------------------------------------------------------------------------
@@ -48,12 +52,15 @@ test v = verifyNonFailingMod defaultOptions { optVerb = v }
 testv :: String -> IO ()
 testv = test 3
 
+testcv :: String -> IO ()
+testcv = verifyNonFailingMod defaultOptions { optVerb = 3, optContract = True }
+
 ------------------------------------------------------------------------
 
 banner :: String
 banner = unlines [bannerLine,bannerText,bannerLine]
  where
-   bannerText = "Fail-Free Verification Tool for Curry (Version of 30/08/18)"
+   bannerText = "Fail-Free Verification Tool for Curry (Version of 15/04/19)"
    bannerLine = take (length bannerText) (repeat '=')
 
 ---------------------------------------------------------------------------
@@ -61,16 +68,21 @@ main :: IO ()
 main = do
   args <- getArgs
   (opts,progs) <- processOptions banner args
-  z3exists <- fileInPath "z3"
-  if z3exists
-    then do
-      when (optVerb opts > 0) $ putStrLn banner
-      verifyNonFailingModules opts [] progs
+  let optname = optName opts
+  if not (null optname)
+    then putStrLn $ "Non-failure condition for '" ++ optname ++ "':\n" ++
+                    encodeContractName (optname ++ "'nonfail")
     else do
-      putStrLn "NON-FAILING ANALYSIS SKIPPED:"
-      putStrLn "The SMT solver Z3 is required for the analyzer to work"
-      putStrLn "but the program 'z3' is not found on the PATH!"
-      exitWith 1
+      z3exists <- fileInPath "z3"
+      if z3exists
+        then do
+          when (optVerb opts > 0) $ putStrLn banner
+          verifyNonFailingModules opts [] progs
+        else do
+          putStrLn "NON-FAILING ANALYSIS SKIPPED:"
+          putStrLn "The SMT solver Z3 is required for the analyzer to work"
+          putStrLn "but the program 'z3' is not found on the PATH!"
+          exitWith 1
 
 verifyNonFailingModules :: Options -> [String] -> [String] -> IO ()
 verifyNonFailingModules _ _ [] = done
@@ -94,17 +106,19 @@ verifyNonFailingModules opts verifiedmods (mod:mods)
 verifyNonFailingMod :: Options -> String -> IO ()
 verifyNonFailingMod opts modname = do
   printWhenStatus opts $ "Analyzing module '" ++ modname ++ "':"
-  prog <- readTypedFlatCurryWithSpec opts modname
+  prog <- readTypedFlatCurryWithSpec opts modname >>= return . simpProg
   impprogs <- mapIO (readTypedFlatCurryWithSpec opts) (progImports prog)
-  let vstate = foldr addProgToState initVState (prog:impprogs)
+  let allprogs = prog : map simpProg impprogs
+  let vstate = foldr addProgToState initVState allprogs
       tinfo  = foldr addFunsToTransInfo (initTransInfo opts)
-                     (map progFuncs (prog:impprogs))
+                     (map progFuncs allprogs)
   siblingconsinfo <- loadAnalysisWithImports siblingCons prog
   pi1 <- getProcessInfos
   printWhenAll opts $ unlines $
     ["ORIGINAL PROGRAM:", line, showCurryModule (unAnnProg prog), line]
-  stats <- proveNonFailingFuncs opts siblingconsinfo tinfo (progFuncs prog)
-                                vstate
+  vstref <- newIORef vstate
+  proveNonFailingFuncs opts siblingconsinfo tinfo vstref (progFuncs prog)
+  stats <- readIORef vstref
   pi2 <- getProcessInfos
   let tdiff = maybe 0 id (lookup ElapsedTime pi2) -
               maybe 0 id (lookup ElapsedTime pi1)
@@ -173,13 +187,13 @@ isProperty fdecl =
 -- * a fresh variable index
 -- * a list of all introduced variables and their types:
 data TransState = TransState
-  { preCond    :: BoolExp
+  { preCond    :: Term
   , freshVar   :: Int
   , varTypes   :: [(Int,TypeExpr)]
   }
 
 makeTransState :: Int -> [(Int,TypeExpr)] -> TransState
-makeTransState = TransState bTrue
+makeTransState = TransState tTrue
 
 -- Increments fresh variable index.
 incFreshVarIndex :: TransState -> TransState
@@ -190,18 +204,14 @@ addVarTypes :: [(Int,TypeExpr)] -> TransState -> TransState
 addVarTypes vts st = st { varTypes = vts ++ varTypes st }
 
 ---------------------------------------------------------------------------
--- Eliminate possible preconditions checks:
--- If an operation `f` occurring in a right-hand side has
--- a precondition check, a proof for the validity of the precondition
--- is extracted and, if the proof is successful, the operation without
--- the precondtion check `f'WithoutPreCondCheck` is called instead.
+-- Prove that a list of defined functions is fail free (w.r.t. their
+-- non-fail conditions).
 proveNonFailingFuncs :: Options -> ProgInfo [(QName,Int)] -> TransInfo
-                     -> [TAFuncDecl] -> VState -> IO VState
-proveNonFailingFuncs opts siblingconsinfo ti fdecls stats = do
-  vstref <- newIORef stats
-  mapIO_ (proveNonFailingFunc opts siblingconsinfo ti vstref) fdecls
-  readIORef vstref
+                     -> IORef VState -> [TAFuncDecl] -> IO ()
+proveNonFailingFuncs opts siblingconsinfo ti vstref =
+  mapIO_ (proveNonFailingFunc opts siblingconsinfo ti vstref)
 
+-- Prove that a function is fail free (w.r.t. their non-fail condition).
 proveNonFailingFunc :: Options -> ProgInfo [(QName,Int)] -> TransInfo
                     -> IORef VState -> TAFuncDecl -> IO ()
 proveNonFailingFunc opts siblingconsinfo ti vstref fdecl =
@@ -210,49 +220,54 @@ proveNonFailingFunc opts siblingconsinfo ti vstref fdecl =
       "Operation to be analyzed: " ++ snd (funcName fdecl)
     modifyIORef vstref incNumAllInStats
     let efdecl = etaExpandFuncDecl fdecl
-    proveNonFailingRule opts siblingconsinfo ti
-      (funcName efdecl) (funcArity efdecl) (funcRule efdecl) vstref
+    proveNonFailingRule opts siblingconsinfo ti vstref
+                        (funcName efdecl) (funcType efdecl)
+                        (funcRule efdecl)
 
+-- Prove that a function rule is fail free (w.r.t. their non-fail condition).
+-- The rule is in eta-expanded form.
 proveNonFailingRule :: Options -> ProgInfo [(QName,Int)] -> TransInfo
-                    -> QName -> Int -> TARule -> IORef VState -> IO ()
-proveNonFailingRule _ _ ti qn farity (AExternal _ _) vstref = do
-  let (nfcond,_)  = nonfailPreCondExpOf ti qn [1..farity] (makeTransState 0 [])
-  unless (nfcond == bTrue) $ modifyIORef vstref incNumNFCInStats
-proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
-                    (ARule _ rargs rhs) vstref = do
-  let farity = length rargs
-      -- compute non-fail precondition of operation:
+                    -> IORef VState -> QName -> TypeExpr -> TARule -> IO ()
+proveNonFailingRule _ _ ti vstref qn ftype (AExternal _ _) = do
+  let atypes = argTypes ftype
+      args   = zip [1 .. length atypes] atypes
+  let (nfcond,_)  = nonfailPreCondExpOf ti qn ftype args (makeTransState 0 [])
+  unless (nfcond == tTrue) $ modifyIORef vstref incNumNFCInStats
+proveNonFailingRule opts siblingconsinfo ti vstref qn@(_,fn) ftype
+                    (ARule _ rargs rhs) = do
+  let -- compute non-fail precondition of operation:
       s0 = makeTransState (maximum (0 : map fst rargs ++ allVars rhs) + 1) rargs
-      (precondformula,s1)  = nonfailPreCondExpOf ti qn [1..farity] s0
+      (precondformula,s1)  = nonfailPreCondExpOf ti qn ftype rargs s0
       s2 = s1 { preCond = precondformula }
-  unless (precondformula == bTrue)  $ modifyIORef vstref incNumNFCInStats
+  unless (precondformula == tTrue)  $ modifyIORef vstref incNumNFCInStats
   -- verify only if the precondition is different from always failing:
-  unless (precondformula == bFalse) $ proveNonFailExp s2 rhs
+  unless (precondformula == tFalse) $ proveNonFailExp s2 rhs
  where
   proveNonFailExp pts exp = case simpExpr exp of
-    AComb ty ct (qf,_) args -> do
+    AComb _ ct (qf,qfty) args -> do
       mapIO_ (proveNonFailExp pts) args
       when (isCombTypeFuncPartCall ct) $
-        let qnpre = addSuffix qf "'nonfail"
+        let qnnonfail = toNonFailQName qf
         in maybe done -- h.o. call nonfailing if op. has no non-fail cond.
              (\_ -> do
                let reason = "due to call '" ++ ppTAExpr exp ++ "'"
                modifyIORef vstref (addFailedFuncToStats fn reason)
                printWhenIntermediate opts $
                  fn ++ ": POSSIBLY FAILING CALL OF '" ++ snd qf ++ "'")
-             (find (\fd -> funcName fd == qnpre) (nfConds ti))
+             (find (\fd -> funcName fd == qnnonfail) (nfConds ti))
       when (ct==FuncCall) $ do
         printWhenIntermediate opts $ "Analyzing call to " ++ snd qf
         let ((bs,_)    ,pts1) = normalizeArgs args pts
-            (bindexps  ,pts2) = mapS (exp2bool True ti) bs pts1
-            (nfcondcall,pts3) = nonfailPreCondExpOf ti qf (map fst bs) pts2
+            (bindexps  ,pts2) = mapS (binding2SMT True ti) bs pts1
+            callargs = zip (map fst bs) (map annExpr args)
+            (nfcondcall,pts3) = nonfailPreCondExpOf ti qf qfty callargs pts2
         -- TODO: select from 'bindexps' only demanded argument positions
-        valid <- if nfcondcall == bTrue
+        valid <- if nfcondcall == tTrue
                    then return (Just True) -- true non-fail cond. is valid
                    else do
                      modifyIORef vstref incFailTestInStats
                      checkImplicationWithSMT opts vstref (varTypes pts3)
-                          (preCond pts) (Conj bindexps) nfcondcall
+                          (preCond pts) (tConj bindexps) nfcondcall
         if valid == Just True
           then do
             printWhenIntermediate opts $
@@ -270,18 +285,18 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
        (-- check a case expression for missing constructors:
         let freshvar = freshVar pts
             freshtypedvar = (freshvar, annExpr e)
-            (be,pts1) = exp2bool True ti (freshvar,e) (incFreshVarIndex pts)
-            pts2 = pts1 { preCond = Conj [preCond pts, be]
+            (be,pts1) = binding2SMT True ti (freshvar,e) (incFreshVarIndex pts)
+            pts2 = pts1 { preCond = tConj [preCond pts, be]
                         , varTypes = freshtypedvar : varTypes pts1 }
             misscons = missingConsInBranch siblingconsinfo brs
-        in do mapIO_ (verifyMissingCons pts2 freshtypedvar) misscons
+        in do mapIO_ (verifyMissingCons pts2 freshtypedvar exp) misscons
               mapIO_ (proveNonFailBranch pts2 freshtypedvar) brs
        )
        (\ (fe,te) ->
            -- check a Boolean case with True/False branch:
-           let (be,pts1) = pred2bool e pts
-               ptsf = pts1 { preCond = Conj [preCond pts, bNot be] }
-               ptst = pts1 { preCond = Conj [preCond pts, be] }
+           let (be,pts1) = pred2SMT e pts
+               ptsf = pts1 { preCond = tConj [preCond pts, tNot be] }
+               ptst = pts1 { preCond = tConj [preCond pts, be] }
            in do proveNonFailExp ptsf fe
                  proveNonFailExp ptst te
        )
@@ -299,12 +314,13 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
 
   -- verify whether a variable (2. argument) can have the constructor (3. arg.)
   -- as a value w.r.t. the collected assertions
-  verifyMissingCons pts (var,vartype) (cons,_) = do
+  verifyMissingCons pts (var,vartype) exp (cons,_) = do
     printWhenIntermediate opts $
       fn ++ ": checking missing constructor case '" ++ snd cons ++ "'"
+       ++ "VAR: " ++ show (var,vartype) ++ "\nCASE:: " ++ show (unAnnExpr (simpExpr exp))
     modifyIORef vstref incPatTestInStats
     valid <- checkImplicationWithSMT opts vstref (varTypes pts) (preCond pts)
-                bTrue (bNot (constructorTest cons (BVar var) vartype))
+                tTrue (tNot (constructorTest False cons (TSVar var) vartype))
     unless (valid == Just True) $ do
       let reason = if valid == Nothing
                      then "due to SMT error"
@@ -318,8 +334,8 @@ proveNonFailingRule opts siblingconsinfo ti qn@(_,fn) _
   proveNonFailBranch pts (var,vartype) branch = do
     let (ABranch p e, pts1) = renamePatternVars pts branch
         -- set pattern type correctly (important for [] pattern)
-        bpat = pat2bool (setAnnPattern vartype p)
-        npts = pts1 { preCond = Conj [preCond pts1, bEquVar var bpat] }
+        bpat = pat2smt (setAnnPattern vartype p)
+        npts = pts1 { preCond = tConj [preCond pts1, tEquVar var bpat] }
     proveNonFailExp npts e
 
 -- Returns the constructors (name/arity) which are missing in the given
@@ -351,155 +367,148 @@ simpExpr exp = case exp of
   _ -> exp
 
 -- Translates a FlatCurry expression to a Boolean formula representing
--- the between a variable (represented by its index in the first
--- component) and the translated expression (second component).
+-- the binding of a variable (represented by its index in the first
+-- component) to the translated expression (second component).
 -- The translated expression is normalized when necessary.
 -- For this purpose, a "fresh variable index" is passed as a state.
 -- Moreover, the returned state contains also the types of all fresh variables.
 -- If the first argument is `False`, the expression is not strictly demanded,
 -- i.e., possible contracts of it (if it is a function call) are ignored.
-exp2bool :: Bool -> TransInfo -> (Int,TAExpr) -> State TransState BoolExp
-exp2bool demanded ti (resvar,exp) = case simpExpr exp of
-  AVar _ i -> returnS $ if resvar==i then bTrue
-                                     else bEquVar resvar (BVar i)
-  ALit _ l -> returnS (bEquVar resvar (lit2bool l))
-  AComb ty ct (qf,_) args ->
+binding2SMT :: Bool -> TransInfo -> (Int,TAExpr) -> State TransState Term
+binding2SMT demanded ti (resvar,exp) =
+ case simpExpr exp of
+  AVar _ i -> returnS $ if resvar==i then tTrue
+                                     else tEquVar resvar (TSVar i)
+  ALit _ l -> returnS (tEquVar resvar (lit2smt l))
+  AComb rtype ct (qf,_) args ->
     normalizeArgs args `bindS` \ (bs,nargs) ->
     -- TODO: select from 'bindexps' only demanded argument positions
-    mapS (exp2bool (isPrimOp qf || optStrict (toolOpts ti)) ti) bs
+    mapS (binding2SMT (isPrimOp qf || optStrict (toolOpts ti)) ti) bs
          `bindS` \bindexps ->
-    comb2bool qf ct nargs bs bindexps
+    comb2bool qf rtype ct nargs bs bindexps
   ALet _ bs e ->
-    mapS (exp2bool False ti)
+    mapS (binding2SMT False ti)
          (map (\ ((i,_),ae) -> (i,ae)) bs) `bindS` \bindexps ->
-    exp2bool demanded ti (resvar,e) `bindS` \bexp ->
-    returnS (Conj (bindexps ++ [bexp]))
+    binding2SMT demanded ti (resvar,e) `bindS` \bexp ->
+    returnS (tConj (bindexps ++ [bexp]))
   AOr _ e1 e2  ->
-    exp2bool demanded ti (resvar,e1) `bindS` \bexp1 ->
-    exp2bool demanded ti (resvar,e2) `bindS` \bexp2 ->
-    returnS (Disj [bexp1, bexp2])
+    binding2SMT demanded ti (resvar,e1) `bindS` \bexp1 ->
+    binding2SMT demanded ti (resvar,e2) `bindS` \bexp2 ->
+    returnS (tDisj [bexp1, bexp2])
   ACase _ _ e brs   ->
     getS `bindS` \ts ->
     let freshvar = freshVar ts
     in putS (addVarTypes [(freshvar, annExpr e)] (incFreshVarIndex ts)) `bindS_`
-       exp2bool demanded ti (freshvar,e) `bindS` \argbexp ->
+       binding2SMT demanded ti (freshvar,e) `bindS` \argbexp ->
        mapS branch2bool (map (\b->(freshvar,b)) brs) `bindS` \bbrs ->
-       returnS (Conj [argbexp, Disj bbrs])
-  ATyped _ e _ -> exp2bool demanded ti (resvar,e)
+       returnS (tConj [argbexp, tDisj bbrs])
+  ATyped _ e _ -> binding2SMT demanded ti (resvar,e)
   AFree _ _ _ -> error "Free variables not yet supported!"
  where
-   comb2bool qf ct nargs bs bindexps
+   comb2bool qf rtype ct nargs bs bindexps
     | qf == pre "otherwise"
       -- specific handling for the moment since the front end inserts it
       -- as the last alternative of guarded rules...
-    = returnS (bEquVar resvar bTrue)
-    | qf == pre "[]"
-    = returnS (bEquVar resvar (BTerm "nil" []))
+    = returnS (tEquVar resvar tTrue)
     | ct == ConsCall
-    = returnS (Conj (bindexps ++
-                     [bEquVar resvar (BTerm (transOpName qf)
-                                            (map arg2bool nargs))]))
+    = returnS (tConj (bindexps ++
+                     [tEquVar resvar
+                              (TComb (cons2SMT (null nargs) False qf rtype)
+                                     (map arg2bool nargs))]))
     | qf == pre "apply"
     = -- cannot translate h.o. apply: ignore it
-      returnS bTrue
+      returnS tTrue
     | isPrimOp qf
-    = returnS (Conj (bindexps ++
-                     [bEquVar resvar (BTerm (transOpName qf)
-                                            (map arg2bool nargs))]))
+    = returnS (tConj (bindexps ++
+                     [tEquVar resvar
+                              (TComb (cons2SMT True False qf rtype)
+                                     (map arg2bool nargs))]))
     | otherwise -- non-primitive operation: add contract only if demanded
-    = preCondExpOf ti qf (map fst bs) `bindS` \precond ->
-      postCondExpOf ti qf (map fst bs ++ [resvar]) `bindS` \postcond ->
-      returnS (Conj (bindexps ++
+    = let targs = zip (map fst bs) (map annExpr nargs) in
+      preCondExpOf ti qf targs `bindS` \precond ->
+      postCondExpOf ti qf (targs ++ [(resvar,rtype)]) `bindS` \postcond ->
+      returnS (tConj (bindexps ++
                      if demanded && optContract (toolOpts ti)
                        then [precond,postcond]
                        else []))
    
-   branch2bool (cvar, (ABranch p e)) =
-     exp2bool demanded ti (resvar,e) `bindS` \branchbexp ->
+   branch2bool (cvar, ABranch p e) =
+     binding2SMT demanded ti (resvar,e) `bindS` \branchbexp ->
      getS `bindS` \ts ->
      putS ts { varTypes = patvars ++ varTypes ts} `bindS_`
-     returnS (Conj [ bEquVar cvar (pat2bool p), branchbexp])
+     returnS (tConj [ tEquVar cvar (pat2smt p), branchbexp])
     where
      patvars = if isConsPattern p
                  then patArgs p
                  else []
 
-   arg2bool e = case e of AVar _ i -> BVar i
-                          ALit _ l -> lit2bool l
+   arg2bool e = case e of AVar _ i -> TSVar i
+                          ALit _ l -> lit2smt l
                           _ -> error $ "Not normalized: " ++ show e
-
--- Transforms an operation name starting with `op_xh1...hn'`, where
--- each `hi` is a two digit hexadecimal number, into the name
--- of corresponding to the ord values of `h1...hn`.
--- For instance, `op_x263E'nonfail` is transformed into `&>'nonfail`.
-transSpecialName :: QName -> QName
-transSpecialName qn@(mn,fn)
-  | "op_x" `isPrefixOf` fn && not (null fntail)
-  = fromHex [] (drop 4 fnop)
-  | otherwise = qn
- where
-  (fnop,fntail) = break (==''') fn
-
-  fromHex s "" = (mn, reverse s ++ fntail)
-  fromHex _ [_] = qn
-  fromHex s (c1:c2:cs) =
-    maybe qn
-          (\ (i,r) -> if null r then fromHex (chr i : s) cs else qn)
-          (readHex [c1,c2])
 
 -- Returns the conjunction of the non-failure condition and precondition
 -- (if the tool option `contract` is set) expression for a given operation
 -- and its arguments (which are assumed to be variable indices).
 -- Rename all local variables by adding the `freshvar` index to them.
-nonfailPreCondExpOf :: TransInfo -> QName -> [Int] -> State TransState BoolExp
-nonfailPreCondExpOf ti qf args =
+nonfailPreCondExpOf :: TransInfo -> QName -> TypeExpr -> [(Int,TypeExpr)]
+                    -> State TransState Term
+nonfailPreCondExpOf ti qf ftype args =
   if optContract (toolOpts ti)
-    then nonfailCondExpOf ti qf args `bindS` \nfcond ->
-         preCondExpOf     ti qf args `bindS` \precond ->
-         returnS (simpBE (Conj [nfcond,precond]))
-    else nonfailCondExpOf ti qf args
+    then nonfailCondExpOf ti qf ftype args `bindS` \ (fvars,nfcond) ->
+         preCondExpOf     ti qf (args ++ fvars) `bindS` \precond ->
+         -- simplify term in order to check later for trivial precondition
+         returnS (simpTerm (tConj [nfcond,precond]))
+    else nonfailCondExpOf ti qf ftype args `bindS` \ (_,rt) -> returnS rt
 
 -- Returns the non-failure condition expression for a given operation
 -- and its arguments (which are assumed to be variable indices).
--- Rename all local variables by adding the `freshvar` index to them.
-nonfailCondExpOf :: TransInfo -> QName -> [Int] -> State TransState BoolExp
-nonfailCondExpOf ti qf args =
-  maybe (predefs qf)
-        (\fd -> if funcArity fd /= length args
-                  then error $ "Operation '" ++ snd qf ++
-                               "': nonfail condition has incorrect arity!"
-                  else applyFunc fd args `bindS` pred2bool)
-        (find (\fd -> transSpecialName (funcName fd) == qnpre) (nfConds ti))
+-- All local variables are renamed by adding the `freshvar` index to them.
+-- If the non-failure condition requires more arguments (due to a
+-- higher-order call), fresh arguments are added which are also returned.
+nonfailCondExpOf :: TransInfo -> QName -> TypeExpr -> [(Int,TypeExpr)]
+                 -> State TransState ([(Int,TypeExpr)], Term)
+nonfailCondExpOf ti qf ftype args =
+  maybe
+    (predefs qf)
+    (\fd -> let moreargs = funcArity fd - length args in
+            if moreargs > 0
+              then -- eta-expand function call with fresh variables so that one
+                   -- can check non-fail conditions with a greater arity:
+                let etatypes = argTypes (dropArgTypes (length args) ftype) in
+                getFreshVarsForTypes (take moreargs etatypes) `bindS` \fvars ->
+                applyFunc fd (args ++ fvars) `bindS` pred2SMT `bindS` \rt ->
+                returnS (fvars,rt)
+              else if moreargs < 0
+                     then error $ "Operation '" ++ snd qf ++
+                                  "': nonfail condition has too few arguments!"
+                     else applyFunc fd args `bindS` pred2SMT `bindS` \rt ->
+                          returnS ([],rt) )
+    (find (\fd -> decodeContractQName (funcName fd) == toNonFailQName qf)
+          (nfConds ti))
  where
-  qnpre = addSuffix qf "'nonfail"
-
   predefs qn | qn `elem` [pre "failed", pre "=:="] ||
                (qn == pre "error" && optError (toolOpts ti))
-             = returnS bFalse
-             | otherwise = returnS bTrue
+             = returnS ([],tFalse)
+             | otherwise = returnS ([],tTrue)
 
 -- Returns the precondition expression for a given operation
 -- and its arguments (which are assumed to be variable indices).
 -- Rename all local variables by adding the `freshvar` index to them.
-preCondExpOf :: TransInfo -> QName -> [Int] -> State TransState BoolExp
+preCondExpOf :: TransInfo -> QName -> [(Int,TypeExpr)] -> State TransState Term
 preCondExpOf ti qf args =
-  maybe (returnS bTrue)
-        (\fd -> applyFunc fd args `bindS` pred2bool)
-        (find (\fd -> funcName fd == qnpre) (preConds ti))
- where
-  qnpre = addSuffix qf "'pre"
+  maybe (returnS tTrue)
+        (\fd -> applyFunc fd args `bindS` pred2SMT)
+        (find (\fd -> funcName fd == toPreCondQName qf) (preConds ti))
 
 -- Returns the postcondition expression for a given operation
 -- and its arguments (which are assumed to be variable indices).
 -- Rename all local variables by adding `freshvar` to them and
 -- return the new freshvar value.
-postCondExpOf :: TransInfo -> QName -> [Int] -> State TransState BoolExp
+postCondExpOf :: TransInfo -> QName -> [(Int,TypeExpr)] -> State TransState Term
 postCondExpOf ti qf args =
-  maybe (returnS bTrue)
-        (\fd -> applyFunc fd args `bindS` pred2bool)
-        (find (\fd -> funcName fd == qnpost) (postConds ti))
- where
-  qnpost = addSuffix qf "'post"
+  maybe (returnS tTrue)
+        (\fd -> applyFunc fd args `bindS` pred2SMT)
+        (find (\fd -> funcName fd == toPostCondQName qf) (postConds ti))
 
 
 -- Applies a function declaration on a list of arguments,
@@ -507,14 +516,20 @@ postCondExpOf ti qf args =
 -- the renamed body of the function declaration.
 -- All local variables are renamed by adding `freshvar` to them.
 -- Also the new fresh variable index is returned.
-applyFunc :: TAFuncDecl -> [Int] -> State TransState TAExpr
-applyFunc fdecl args s0 =
-  let (ARule _ orgargs orgexp) = funcRule fdecl
+applyFunc :: TAFuncDecl -> [(Int,TypeExpr)] -> State TransState TAExpr
+applyFunc fdecl targs s0 =
+  let tsub = maybe (error $ "applyFunc: types\n" ++
+                            show (argTypes (funcType fdecl)) ++ "\n" ++
+                            show (map snd targs) ++ "\ndo not match!")
+                   id
+                   (matchTypes (argTypes (funcType fdecl)) (map snd targs))
+      (ARule _ orgargs orgexp) = substRule tsub (funcRule fdecl)
       exp = rnmAllVars (renameRuleVar orgargs) orgexp
       s1  = s0 { freshVar = max (freshVar s0)
                                 (maximum (0 : args ++ allVars exp) + 1) }
   in (applyArgs exp (drop (length orgargs) args), s1)
  where
+  args = map fst targs
   -- renaming function for variables in original rule:
   renameRuleVar orgargs r = maybe (r + freshVar s0)
                                   (args!!)
@@ -531,48 +546,49 @@ applyFunc fdecl args s0 =
 -- Translates a Boolean FlatCurry expression into a Boolean formula.
 -- Calls to user-defined functions are replaced by the first argument
 -- (which might be true or false).
-pred2bool :: TAExpr -> State TransState BoolExp
-pred2bool exp = case simpExpr exp of
-  AVar _ i              -> returnS (BVar i)
-  ALit _ l              -> returnS (lit2bool l)
-  AComb _ _ (qf,_) args -> comb2bool qf (length args) args
-  _                     -> returnS (BTerm (show exp) [])
+pred2SMT :: TAExpr -> State TransState Term
+pred2SMT exp = case simpExpr exp of
+  AVar _ i              -> returnS (TSVar i)
+  ALit _ l              -> returnS (lit2smt l)
+  AComb _ ct (qf,ftype) args -> comb2bool qf ftype ct (length args) args
+  _                          -> returnS (tComb (show exp) []) -- TODO!
  where
-  comb2bool qf ar args
+  comb2bool qf ftype ct ar args
     | qf == pre "[]" && ar == 0
-    = returnS (BTerm "as" [BTerm "nil" [], polytype2SMTExp (annExpr exp)])
+    = returnS (sortedConst "nil" (polytype2sort (annExpr exp)))
     | qf == pre "not" && ar == 1
-    = pred2bool (head args) `bindS` \barg -> returnS (Not barg)
+    = pred2SMT (head args) `bindS` \barg -> returnS (tNot barg)
     | qf == pre "null" && ar == 1
     = let arg = head args
-      in pred2bool arg `bindS` \barg ->
+      in pred2SMT arg `bindS` \barg ->
          getS `bindS` \tstate ->
-         returnS (bEqu barg (BTerm "as"
-                               [BTerm "nil" [],
-                                polytype2SMTExp (typeOfVar tstate arg)]))
+         returnS (tEqu barg
+                       (sortedConst "nil"
+                                    (polytype2sort (typeOfVar tstate arg))))
     | qf == pre "apply" && ar == 2 && isComb (head args)
     = -- "defunctionalization": if the first argument is a
       -- combination, append the second argument to its arguments
-      mapS pred2bool args `bindS` \bargs ->
+      mapS pred2SMT args `bindS` \bargs ->
       case bargs of
-        [BTerm bn bas, barg2] -> returnS (BTerm bn (bas++[barg2]))
-        _ -> returnS (BTerm (show exp) []) -- no translation possible
+        [TComb bn bas, barg2] -> returnS (TComb bn (bas++[barg2]))
+        _ -> returnS (tComb (show exp) []) -- no translation possible
     | qf == pre "apply"
     = -- cannot translate h.o. apply: replace it by new variable
       getS `bindS` \ts ->
       let fvar = freshVar ts
           nts  = addVarTypes [(fvar,annExpr exp)] (incFreshVarIndex ts)
       in putS nts `bindS_`
-         returnS (BVar fvar)
+         returnS (TSVar fvar)
     | qf == pre "/="
-    = comb2bool (pre "==") ar args `bindS` \be ->
-      returnS (bNot be)
+    = comb2bool (pre "==") ftype ct ar args `bindS` \be ->
+      returnS (tNot be)
     | otherwise
-    = mapS pred2bool args `bindS` \bargs ->
-      returnS (BTerm (transOpName qf) bargs)
+    = mapS pred2SMT args `bindS` \bargs ->
+      returnS (TComb (cons2SMT (ct /= ConsCall || not (null bargs)) False qf ftype)
+                     bargs)
 
   typeOfVar tstate e = case e of
-    AVar _ i -> maybe (error $ "pred2bool: variable " ++ show i ++ " not found")
+    AVar _ i -> maybe (error $ "pred2SMT: variable " ++ show i ++ " not found")
                       id
                       (lookup i (varTypes tstate))
     _        -> annExpr e -- might not be correct due to applyFunc!
@@ -588,6 +604,16 @@ normalizeArgs (e:es) = case e of
               in putS nts `bindS_`
                  normalizeArgs es `bindS` \ (bs,nes) ->
                  returnS ((fvar,e):bs, AVar (annExpr e) fvar : nes)
+
+
+-- Get for the types (given in the first argument) fresh typed variables.
+getFreshVarsForTypes :: [TypeExpr] -> State TransState [(VarIndex, TypeExpr)]
+getFreshVarsForTypes types pts =
+  let n     = length types
+      fv    = freshVar pts
+      vars  = take n [fv ..]
+      tvars = zip vars types
+  in (tvars, pts { freshVar = fv + n, varTypes = tvars ++ varTypes pts })
 
 
 -- Rename let-bound variables in a let expression.
@@ -638,51 +664,54 @@ renamePatternVars pts (ABranch p e) =
     else (ABranch p e, pts)
 
 
--- Adds a suffix to some qualified name:
-addSuffix :: QName -> String -> QName
-addSuffix (mn,fn) s = (mn, fn ++ s)
-
 ---------------------------------------------------------------------------
 -- Calls the SMT solver to check whether an assertion implies some
--- (pre/post) condition.
+-- property.
 checkImplicationWithSMT :: Options -> IORef VState -> [(Int,TypeExpr)]
-                        -> BoolExp -> BoolExp -> BoolExp -> IO (Maybe Bool)
+                        -> Term -> Term -> Term -> IO (Maybe Bool)
 checkImplicationWithSMT opts vstref vartypes assertion impbindings imp = do
-  let usertypes = filter (\ (mn,_) -> mn /= "Prelude")
-                         (foldr union [] (map (tconsOfTypeExpr . snd) vartypes))
+  let (pretypes,usertypes) =
+         partition ((== "Prelude") . fst)
+                   (foldr union [] (map (tconsOfTypeExpr . snd) vartypes))
   vst <- readIORef vstref
+  let allsyms = catMaybes
+                  (map (\n -> maybe Nothing Just (untransOpName n))
+                       (map qidName
+                         (allQIdsOfTerm (tConj [assertion, impbindings, imp]))))
+  unless (null allsyms) $ printWhenIntermediate opts $
+    "Translating operations into SMT: " ++
+    unwords (map showQName allsyms)
+  smtfuncs <- funcs2SMT vstref allsyms
   let decls = map (maybe (error "Internal error: some datatype not found!") id)
                   (map (tdeclOf vst) usertypes)
-      smtdatatypes = unlines [ "; User-defined datatypes:"
-                             , unlines (map tdecl2SMT decls) ]
-      smt = unlines
-              [ "; Free variables:"
-              , typedVars2SMT vartypes
-              , "; Boolean formula of assertion (known properties):"
-              , showBoolExp (assertSMT assertion)
-              , ""
-              , "; Bindings of implication:"
-              , showBoolExp (assertSMT impbindings)
-              , ""
-              , "; Assert negated implication:"
-              , showBoolExp (assertSMT (Not imp))
-              , ""
-              , "; check satisfiability:"
-              , "(check-sat)"
-              , "; if unsat, the implication is valid"
+      smt   = concatMap preludeType2SMT (map snd pretypes) ++
+              [ EmptyLine ] ++
+              (if null decls
+                 then []
+                 else [ Comment "User-defined datatypes:" ] ++
+                      map tdecl2SMT decls) ++
+              [ EmptyLine, smtfuncs, EmptyLine
+              , Comment "Free variables:" ] ++
+              map typedVar2SMT vartypes ++
+              [ EmptyLine
+              , Comment "Boolean formula of assertion (known properties):"
+              , sAssert assertion, EmptyLine
+              , Comment "Bindings of implication:"
+              , sAssert impbindings, EmptyLine
+              , Comment "Assert negated implication:"
+              , sAssert (tNot imp), EmptyLine
+              , Comment "check satisfiability:"
+              , CheckSat
+              , Comment "if unsat, the implication is valid"
               ]
-  let allsymbols = allSymbolsOfBE (Conj [assertion, impbindings, imp])
-      allqsymbols = catMaybes (map untransOpName allsymbols)
-  unless (null allqsymbols) $ printWhenIntermediate opts $
-    "Translating operations into SMT: " ++
-    unwords (map showQName allqsymbols)
-  smtfuncs   <- funcs2SMT vstref allqsymbols
+  --putStrLn $ "SMT commands as Curry term:\n" ++ show smt
   smtprelude <- readFile (packagePath </> "include" </> "Prelude.smt")
-  let smtinput = smtprelude ++ smtdatatypes ++ smtfuncs ++ smt
+  let smtinput = smtprelude ++ showSMT smt
   printWhenAll opts $ unlines ["SMT SCRIPT:", line, smtinput, line]
   printWhenAll opts $ "CALLING Z3 (with options: -smt2 -T:5)..."
   (ecode,out,err) <- evalCmd "z3" ["-smt2", "-in", "-T:5"] smtinput
-  when (ecode>0) $ printWhenAll opts $ "EXIT CODE: " ++ show ecode
+  when (ecode>0) $ do printWhenAll opts $ "EXIT CODE: " ++ show ecode
+                      writeFile "error.smt" smtinput
   printWhenAll opts $ "RESULT:\n" ++ out
   unless (null err) $ printWhenAll opts $ "ERROR:\n" ++ err
   let pcvalid = let ls = lines out in not (null ls) && head ls == "unsat"
@@ -698,12 +727,9 @@ axiomatizedOps :: [String]
 axiomatizedOps = ["Prelude_null","Prelude_take","Prelude_length"]
 
 ---------------------------------------------------------------------------
--- Translates a list of type variables to SMT declarations:
-typedVars2SMT :: [(Int,TypeExpr)] -> String
-typedVars2SMT tvars = unlines (map tvar2SMT tvars)
- where
-  tvar2SMT (i,te) = withBracket $ unwords
-    ["declare-const", smtBE (BVar i), smtBE (polytype2SMTExp te)]
+-- Translate a typed variables to an SMT declaration:
+typedVar2SMT :: (Int,TypeExpr) -> Command
+typedVar2SMT (i,te) = DeclareVar (SV i (polytype2sort te))
 
 -- Gets all type constructors of a type expression.
 tconsOfTypeExpr :: TypeExpr -> [QName]
@@ -711,16 +737,10 @@ tconsOfTypeExpr (TVar _) = []
 tconsOfTypeExpr (FuncType a b) =  union (tconsOfTypeExpr a) (tconsOfTypeExpr b)
 tconsOfTypeExpr (TCons qName texps) =
   foldr union [qName] (map tconsOfTypeExpr texps)
+tconsOfTypeExpr (ForallType _ te) =  tconsOfTypeExpr te
 
 ---------------------------------------------------------------------------
 -- Auxiliaries:
-
---- Checks whether a file exists in one of the directories on the PATH.
-fileInPath :: String -> IO Bool
-fileInPath file = do
-  path <- getEnviron "PATH"
-  dirs <- return $ splitOn ":" path
-  (liftIO (any id)) $ mapIO (doesFileExist . (</> file)) dirs
 
 --- Tests whether the given branches of a case expressions
 --- are a Boolean case distinction.
@@ -747,6 +767,19 @@ Still to be done:
 
 Verified system libraries:
 
+- Prelude
+- Char
+- Either
+- ErrorState
+- Integer
+- Maybe
+- State
+- ShowS
+
+ Prelude Char Either ErrorState Integer Maybe State ShowS
+
+
+Version without type classes:
 - Prelude
 - AnsiCodes
 - Either

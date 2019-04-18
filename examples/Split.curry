@@ -6,6 +6,6 @@ split _ []                 = [[]]
 split p (x:xs) | p x       = [] : split p xs
                | otherwise = --let (ys:yss) = split p xs in (x:ys):yss
                              -- TODO: improve let reasoning in tool...
-                             (x:head (split p xs)):tail (split p xs)
+                             (x : head (split p xs)) : tail (split p xs)
 
 split'post p xs ys = not (null ys)

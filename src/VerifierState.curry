@@ -72,7 +72,7 @@ addProgToState prog vstate = vstate { currTAProgs = prog : currTAProgs vstate }
 ---------------------------------------------------------------------------
 --- Selects the type declaration of a type constructor from the state.
 tdeclOf :: VState -> QName -> Maybe TypeDecl
-tdeclOf vst tcons@(mn,tc) =
+tdeclOf vst tcons@(mn,_) =
   maybe Nothing
         (\p -> find (\td -> typeName td == tcons) (progTypes p))
         (find (\p -> progName p == mn) (currTAProgs vst))

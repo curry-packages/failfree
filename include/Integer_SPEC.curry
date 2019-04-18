@@ -23,10 +23,10 @@ factorial'post _ f = f > 0
 binomial'nonfail :: Int -> Int -> Bool
 binomial'nonfail n m = m>0 && n>=m
 
-maxlist'nonfail :: [a] -> Bool
+maxlist'nonfail :: Ord a => [a] -> Bool
 maxlist'nonfail xs = not (null xs)
 
-minlist'nonfail :: [a] -> Bool
+minlist'nonfail :: Ord a => [a] -> Bool
 minlist'nonfail xs = not (null xs)
 
 bitTrunc'nonfail :: Int -> Int -> Bool

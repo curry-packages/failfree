@@ -10,13 +10,13 @@ last'nonfail xs = not (null xs)
 init'nonfail :: [a] -> Bool
 init'nonfail xs = not (null xs)
 
-maximum'nonfail :: [a] -> Bool
+maximum'nonfail :: Ord a => [a] -> Bool
 maximum'nonfail xs = not (null xs)
 
 maximumBy'nonfail :: (a -> a -> Ordering) -> [a] -> Bool
 maximumBy'nonfail _ xs = not (null xs)
 
-minimum'nonfail :: [a] -> Bool
+minimum'nonfail :: Ord a => [a] -> Bool
 minimum'nonfail xs = not (null xs)
 
 minimumBy'nonfail :: (a -> a -> Ordering) -> [a] -> Bool

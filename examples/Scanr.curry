@@ -1,3 +1,6 @@
+--- Example for using post-conditions for verification:
+--- The successful verification requires option `--contract`!
+
 --- `scanr` is the right-to-left dual of `scanl`.
 scanr             :: (a -> b -> b) -> b -> [a] -> [b]
 scanr _ q0 []     =  [q0]

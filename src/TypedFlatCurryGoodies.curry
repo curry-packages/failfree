@@ -2,28 +2,28 @@
 --- Some goodies to deal with type-annotated FlatCurry programs.
 ---
 --- @author  Michael Hanus
---- @version April 2018
+--- @version April 2019
 ---------------------------------------------------------------------------
 
 module TypedFlatCurryGoodies where
 
 import Directory    ( doesFileExist )
-import Distribution ( getLoadPathForModule, lookupModuleSource
-                    , stripCurrySuffix )
 import FilePath     ( (</>) )
 import IOExts
 import List         ( find, maximum, nub, union )
 import Maybe        ( fromJust )
-import Pretty       ( pretty )
 import System       ( exitWith )
 
 -- Imports from dependencies:
---import FlatCurry.Annotated.Files   ( readTypedFlatCurry )
+import Data.FiniteMap
+import FlatCurry.Annotated.Files         ( readTypedFlatCurry )
 import FlatCurry.Annotated.Goodies
 import FlatCurry.Annotated.Pretty        ( ppExp )
 import FlatCurry.Annotated.Types
-import FlatCurry.Annotated.TypeInference ( inferProg )
-import FlatCurry.Files
+import FlatCurry.Annotated.TypeSubst
+import System.CurryPath ( getLoadPathForModule, lookupModuleSource
+                        , stripCurrySuffix )
+import Text.Pretty      ( showWidth )
 
 import PackageConfig ( packagePath )
 import ToolOptions
@@ -38,16 +38,6 @@ type TABranchExpr = ABranchExpr TypeExpr
 type TAPattern    = APattern    TypeExpr
 
 ----------------------------------------------------------------------------
---- Reads a typed FlatCurry program or exits with a failure message
---- in case of some typing error.
-readTypedFlatCurry :: String -> IO TAProg
-readTypedFlatCurry mname = do
-  prog <- readFlatCurry mname
-  inferProg prog >>=
-    either (\e -> putStrLn ("Error during FlatCurry type inference:\n" ++ e) >>
-                  exitWith 1)
-           return
-
 --- Reads a typed FlatCurry program together with a possible `_SPEC` program
 --- (containing further contracts) or exits with a failure message
 --- in case of some typing error.
@@ -89,7 +79,7 @@ getAllFunctions vstref currfuncs newfuns = do
  where
   getAllFuncs _ [] = return (reverse currfuncs)
   getAllFuncs currmods (newfun:newfuncs)
-    | newfun `elem` standardConstructors ++ map funcName currfuncs
+    | newfun `elem` map (pre . fst) transPrimCons ++ map funcName currfuncs
       || isPrimOp newfun
     = getAllFunctions vstref currfuncs newfuncs
     | fst newfun `elem` map progName currmods
@@ -140,7 +130,7 @@ ndExpr = trExpr (\_ _ -> False)
 
 --- Pretty prints an expression.
 ppTAExpr :: TAExpr -> String
-ppTAExpr e = pretty 200 (ppExp e)
+ppTAExpr e = showWidth 200 (ppExp e)
 
 --- Sets the top annotation of a pattern.
 setAnnPattern :: TypeExpr -> TAPattern -> TAPattern
@@ -154,34 +144,52 @@ isPrimOp (mn,fn) = mn=="Prelude" && fn `elem` map fst preludePrimOps
 
 --- Primitive operations of the prelude and their SMT names.
 preludePrimOps :: [(String,String)]
-preludePrimOps =
-  [("==","=")
-  ,("/=","/=")  -- will be translated as negated '='
-  ,("+","+")
-  ,("-","-")
-  ,("negate","-")
-  ,("*","*")
-  ,("div","div")
-  ,("mod","mod")
-  ,("rem","rem")
-  ,(">",">")
-  ,(">=",">=")
-  ,("<","<")
-  ,("<=","<=")
-  ,("not","not")
+preludePrimOps = arithPrimOps ++
+  [("not","not")
   ,("&&","and")
   ,("||","or")
   ,("otherwise","true")
   ,("apply","apply") -- TODO...
   ]
 
---- Primitive constructors from the prelude and their SMT names.
-primCons :: [(String,String)]
-primCons =
+--- Primitive arithmetic operations of the prelude and their SMT names.
+arithPrimOps :: [(String,String)]
+arithPrimOps =
+  [("==","=")
+  ,("_impl#==#Prelude.Eq#Prelude.Int","=")
+  ,("_impl#==#Prelude.Eq#Prelude.Char","=")
+  ,("/=","/=")  -- will be translated as negated '='
+  ,("_impl#/=#Prelude.Eq#Prelude.Int","/=")
+  ,("_impl#/=#Prelude.Eq#Prelude.Char","/=")
+  ,("_impl#+#Prelude.Num#Prelude.Int","+")
+  ,("_impl#-#Prelude.Num#Prelude.Int","-")
+  ,("_impl#*#Prelude.Num#Prelude.Int","*")
+  ,("_impl#negate#Prelude.Num#Prelude.Int","-")
+  ,("_impl#div#Prelude.Integral#Prelude.Int","div")
+  ,("_impl#mod#Prelude.Integral#Prelude.Int","mod")
+  ,("_impl#rem#Prelude.Integral#Prelude.Int","rem")
+  ,("_impl#>#Prelude.Ord#Prelude.Int",">")
+  ,("_impl#<#Prelude.Ord#Prelude.Int","<")
+  ,("_impl#>=#Prelude.Ord#Prelude.Int",">=")
+  ,("_impl#<=#Prelude.Ord#Prelude.Int","<=")
+  ,("_impl#>#Prelude.Ord#Prelude.Float",">")
+  ,("_impl#<#Prelude.Ord#Prelude.Float","<")
+  ,("_impl#>=#Prelude.Ord#Prelude.Float",">=")
+  ,("_impl#<=#Prelude.Ord#Prelude.Float","<=")
+  ,("_impl#>#Prelude.Ord#Prelude.Char",">")
+  ,("_impl#<#Prelude.Ord#Prelude.Char","<")
+  ,("_impl#>=#Prelude.Ord#Prelude.Char",">=")
+  ,("_impl#<=#Prelude.Ord#Prelude.Char","<=")
+  ]
+
+--- Some primitive constructors from the prelude and their SMT names.
+transPrimCons :: [(String,String)]
+transPrimCons =
   [("True","true")
   ,("False","false")
   ,("[]","nil")
   ,(":","insert")
+  ,("()","unit")
   ,("(,)","mk-pair")
   ,("LT","LT")
   ,("EQ","EQ")
@@ -190,12 +198,8 @@ primCons =
   ,("Just","Just")
   ,("Left","Left")
   ,("Right","Right")
-  ]
-
--- Some standard constructors from the prelude.
-standardConstructors :: [QName]
-standardConstructors =
-  map (pre . fst) primCons ++ [pre "()", pre "(,)", pre "(,,)"]
+  ] ++
+  map (\i -> ('(' : take (i-1) (repeat ',') ++ ")", "Tuple" ++ show i)) [3..15]
 
 ----------------------------------------------------------------------------
 --- Eta-expansion of user-defined function declarations.
@@ -210,42 +214,72 @@ etaExpandFuncDecl (AFunc qn ar vis texp (ARule tr args rhs)) =
   argtypes = argTypes texp
   etavars  = zip [freshvar ..] (drop ar argtypes)
 
-  applyExp exp [] = exp
-  applyExp exp vars@(v1:vs) = case exp of
-    AComb te ct (qf,qt) cargs -> case ct of
-      FuncPartCall m -> applyExp (AComb (dropArgTypes 1 te)
-                                        (if m==1 then FuncCall
-                                                 else FuncPartCall (m-1))
-                                        (qf,qt) 
-                                        (cargs ++ [v1]))
-                                 vs
-      _ -> applyExp (AComb (dropArgTypes 1 te) FuncCall
-                           (pre "apply", FuncType (annExpr v1) te) [exp, v1]) vs
-    ACase  te ct e brs -> ACase (adjustType te) ct e
-                   (map (\ (ABranch p be) -> ABranch p (applyExp be vars)) brs)
-    AOr    te e1 e2 -> AOr (adjustType te) (applyExp e1 vars) (applyExp e2 vars)
-    ALet   te bs e  -> ALet   (adjustType te) bs (applyExp e vars)
-    AFree  te fvs e -> AFree  (adjustType te) fvs (applyExp e vars)
-    ATyped te e ty  -> ATyped (adjustType te) (applyExp e vars) (adjustType ty)
-    AVar   te _     -> applyExp (AComb (dropArgTypes 1 te) FuncCall
-                                       (pre "apply", FuncType (annExpr v1) te)
-                                       [exp, v1]) vs
-    ALit   _  _     -> error "etaExpandFuncDecl: cannot apply literal"
-   where
-    adjustType ty = dropArgTypes (length vars) ty 
+--- Apply arguments to a given FlatCurry expression by transforming
+--- this expression whenever possible.
+applyExp :: TAExpr -> [TAExpr] -> TAExpr
+applyExp exp [] = exp
+applyExp exp vars@(v1:vs) = case exp of
+  AComb te ct (qf,qt) cargs -> case ct of
+    FuncPartCall m -> applyExp (AComb (dropArgTypes 1 te)
+                                      (if m==1 then FuncCall
+                                               else FuncPartCall (m-1))
+                                      (qf,qt) 
+                                      (cargs ++ [v1]))
+                               vs
+    _ -> applyExp (AComb (dropArgTypes 1 te) FuncCall
+                         (pre "apply", FuncType (annExpr v1) te) [exp, v1]) vs
+  ACase  te ct e brs -> ACase (adjustType te) ct e
+                 (map (\ (ABranch p be) -> ABranch p (applyExp be vars)) brs)
+  AOr    te e1 e2 -> AOr (adjustType te) (applyExp e1 vars) (applyExp e2 vars)
+  ALet   te bs e  -> ALet   (adjustType te) bs (applyExp e vars)
+  AFree  te fvs e -> AFree  (adjustType te) fvs (applyExp e vars)
+  ATyped te e ty  -> ATyped (adjustType te) (applyExp e vars) (adjustType ty)
+  AVar   te _     -> applyExp (AComb (dropArgTypes 1 te) FuncCall
+                                     (pre "apply", FuncType (annExpr v1) te)
+                                     [exp, v1]) vs
+  ALit   _  _     -> error "etaExpandFuncDecl: cannot apply literal"
+ where
+  adjustType ty = dropArgTypes (length vars) ty 
 
-  --- Remove the given number of argument types from a (nested) functional type.
-  dropArgTypes n ty
-    | n==0      = ty
-    | otherwise = case ty of FuncType _ rt -> dropArgTypes (n-1) rt
-                             _ -> error "dropArgTypes: too few argument types"
+--- Remove the given number of argument types from a (nested) functional type.
+dropArgTypes :: Int -> TypeExpr -> TypeExpr
+dropArgTypes n ty
+  | n==0      = ty
+  | otherwise = case ty of FuncType _ rt -> dropArgTypes (n-1) rt
+                           _ -> error "dropArgTypes: too few argument types"
 
 ----------------------------------------------------------------------------
+--- Is the type expression a base type?
+isBaseType :: TypeExpr -> Bool
+isBaseType (TVar _)         = False
+isBaseType (TCons _ targs)  = null targs
+isBaseType (FuncType _ _)   = False
+isBaseType (ForallType _ _) = False
 
+----------------------------------------------------------------------------
+--- Compute type matching, i.e., if `matchType t1 t2 = s`, then `t2 = s(t1)`.
+matchType :: TypeExpr -> TypeExpr -> Maybe AFCSubst
+matchType t1 t2 = case (t1,t2) of
+  (TVar v        , _) -> Just $ if t1 == t2 then emptyAFCSubst
+                                            else addToFM emptyAFCSubst v t2
+  (TCons tc1 ts1 , TCons tc2 ts2) | tc1 == tc2 -> matchTypes ts1 ts2
+  (FuncType a1 r1, FuncType a2 r2) -> matchTypes [a1,r1] [a2,r2]
+  (ForallType _ _, _) -> error "matchType: ForallType occurred"
+  (_, ForallType _ _) -> error "matchType: ForallType occurred"
+  _ -> Nothing
+
+matchTypes :: [TypeExpr] -> [TypeExpr] -> Maybe AFCSubst
+matchTypes []       []       = Just emptyAFCSubst
+matchTypes []       (_:_)    = Nothing
+matchTypes (_:_)    []       = Nothing
+matchTypes (t1:ts1) (t2:ts2) = do
+  s <- matchType t1 t2
+  t <- matchTypes (map (subst s) ts1)(map (subst s) ts2)
+  return (plusFM s t)
+
+----------------------------------------------------------------------------
+--- Transform name into Prelude-qualified name.
 pre :: String -> QName
 pre f = ("Prelude",f)
-
-showQName :: QName -> String
-showQName (mn,fn) = mn ++ "." ++ fn
 
 ----------------------------------------------------------------------------

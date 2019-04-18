@@ -2,6 +2,7 @@
 
 --- Natural numbers defined in Peano representation.
 data Nat = Z | S Nat
+ deriving Eq
 
 --- Transforms a natural number into a standard integer.
 fromNat :: Nat -> Int
@@ -17,6 +18,6 @@ add (S m) n = S(add m n)
 pred :: Nat -> Nat
 pred (S m) = m
 
-pred'nonfail x = x/=Z
+pred'nonfail x = not (x==Z)
 
 main = pred (S Z)

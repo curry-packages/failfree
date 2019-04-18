@@ -8,8 +8,6 @@ foldr1 _ [x]          = x
 foldr1 f (x:xs@(_:_)) = f x (foldr1 f xs)
 
 unwords    :: [String] -> String
-unwords ws = if ws==[] then []
-                       else foldr1 (\w s -> w ++ ' ':s) ws
-
-
-
+unwords ws = if ws==[]
+               then []
+               else foldr1 (\w s -> w ++ ' ':s) ws

@@ -97,7 +97,8 @@ Notes:
   `hi` is a two digit hexadecimal number and the name
   of the operator corresponds to the ord values of `h1...hn`.
   For instance, the non-fail condition for `&>` can be named
-  `op_x263E'nonfail`.
+  `op_x263E'nonfail`. To generate such names automatically,
+  one can use the option `--name` of the tool.
 
 - Operations defining contracts and properties are not verified.
 
