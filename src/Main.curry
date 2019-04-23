@@ -15,7 +15,6 @@ import List         ( (\\), elemIndex, find, isPrefixOf, isSuffixOf
 import Maybe        ( catMaybes )
 import State
 import System
-import Unsafe
 
 -- Imports from dependencies:
 import Analysis.ProgInfo
@@ -24,23 +23,22 @@ import Analysis.Types
 import Contract.Names
 import CASS.Server             ( analyzeGeneric, analyzePublic )
 import Debug.Profile
-import FlatCurry.Annotated.Types
-import FlatCurry.Annotated.TypeSubst
-import FlatCurry.Files
+import FlatCurry.Annotated.TypeSubst ( substRule )
+import FlatCurry.Files               ( readFlatCurryInt )
 import FlatCurry.Types
-import qualified FlatCurry.Goodies as FCG
 import FlatCurry.Annotated.Goodies
-import ShowFlatCurry           ( showCurryModule )
-import System.Path             ( fileInPath )
+import ShowFlatCurry                 ( showCurryModule )
+import System.Path                   ( fileInPath )
 
 -- Imports from package modules:
 import ESMT
 import Curry2SMT
+import FlatCurry.Typed.Files
+import FlatCurry.Typed.Goodies
+import FlatCurry.Typed.Names
+import FlatCurry.Typed.Types
 import PackageConfig ( packagePath )
-import PatternAnalysis
 import ToolOptions
-import TypedFlatCurryGoodies
-import SimpFlatCurry
 import VerifierState
 
 ------------------------------------------------------------------------
@@ -60,7 +58,7 @@ testcv = verifyNonFailingMod defaultOptions { optVerb = 3, optContract = True }
 banner :: String
 banner = unlines [bannerLine,bannerText,bannerLine]
  where
-   bannerText = "Fail-Free Verification Tool for Curry (Version of 15/04/19)"
+   bannerText = "Fail-Free Verification Tool for Curry (Version of 23/04/19)"
    bannerLine = take (length bannerText) (repeat '=')
 
 ---------------------------------------------------------------------------
@@ -106,9 +104,9 @@ verifyNonFailingModules opts verifiedmods (mod:mods)
 verifyNonFailingMod :: Options -> String -> IO ()
 verifyNonFailingMod opts modname = do
   printWhenStatus opts $ "Analyzing module '" ++ modname ++ "':"
-  prog <- readTypedFlatCurryWithSpec opts modname >>= return . simpProg
-  impprogs <- mapIO (readTypedFlatCurryWithSpec opts) (progImports prog)
-  let allprogs = prog : map simpProg impprogs
+  prog <- readSimpTypedFlatCurryWithSpec opts modname
+  impprogs <- mapIO (readSimpTypedFlatCurryWithSpec opts) (progImports prog)
+  let allprogs = prog : impprogs
   let vstate = foldr addProgToState initVState allprogs
       tinfo  = foldr addFunsToTransInfo (initTransInfo opts)
                      (map progFuncs allprogs)

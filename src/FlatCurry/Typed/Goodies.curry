@@ -5,99 +5,26 @@
 --- @version April 2019
 ---------------------------------------------------------------------------
 
-module TypedFlatCurryGoodies where
+module FlatCurry.Typed.Goodies where
 
-import Directory    ( doesFileExist )
-import FilePath     ( (</>) )
-import IOExts
-import List         ( find, maximum, nub, union )
-import Maybe        ( fromJust )
-import System       ( exitWith )
+import List         ( maximum, nub, union )
 
 -- Imports from dependencies:
 import Data.FiniteMap
-import FlatCurry.Annotated.Files         ( readTypedFlatCurry )
 import FlatCurry.Annotated.Goodies
-import FlatCurry.Annotated.Pretty        ( ppExp )
-import FlatCurry.Annotated.Types
+import FlatCurry.Annotated.Pretty    ( ppExp )
 import FlatCurry.Annotated.TypeSubst
-import System.CurryPath ( getLoadPathForModule, lookupModuleSource
-                        , stripCurrySuffix )
-import Text.Pretty      ( showWidth )
+import Text.Pretty                   ( showWidth )
 
-import PackageConfig ( packagePath )
-import ToolOptions
-import VerifierState
-
--- Type synomyms for type-annotated FlatCurry entities:
-type TAProg       = AProg       TypeExpr
-type TAFuncDecl   = AFuncDecl   TypeExpr
-type TARule       = ARule       TypeExpr
-type TAExpr       = AExpr       TypeExpr
-type TABranchExpr = ABranchExpr TypeExpr
-type TAPattern    = APattern    TypeExpr
+import FlatCurry.Typed.Types
 
 ----------------------------------------------------------------------------
---- Reads a typed FlatCurry program together with a possible `_SPEC` program
---- (containing further contracts) or exits with a failure message
---- in case of some typing error.
-readTypedFlatCurryWithSpec :: Options -> String -> IO TAProg
-readTypedFlatCurryWithSpec opts mname = do
-  whenStatus opts $ putStr $
-    "Loading typed FlatCurry program '" ++ mname ++ "'..."
-  prog     <- readTypedFlatCurry mname
-  loadpath <- getLoadPathForModule specName
-  mbspec   <- lookupModuleSource (loadpath ++ [packagePath </> "include"])
-                                 specName
-  maybe ( whenStatus opts (putStrLn "done") >> return prog )
-        (\ (_,specname) -> do
-           let specpath = stripCurrySuffix specname
-           when (optVerb opts > 0) $ putStr $
-             "'" ++ (if optVerb opts > 1 then specpath else specName) ++ "'..."
-           specprog <- readTypedFlatCurry specpath
-           whenStatus opts $ putStrLn "done"
-           return (unionTAProg prog (rnmProg mname specprog))
-        )
-        mbspec
- where
-  specName = mname ++ "_SPEC"
-
 --- Returns the union of two typed FlatCurry programs.
 unionTAProg :: TAProg -> TAProg -> TAProg
 unionTAProg (AProg name imps1 types1 funcs1 ops1)
             (AProg _    imps2 types2 funcs2 ops2) =
   AProg name (filter (/=name) (union imps1 imps2))
         (types1++types2) (funcs1++funcs2) (ops1++ops2)
-
-----------------------------------------------------------------------------
---- Extract all user-defined typed FlatCurry functions that might be called
---- by a given list of functions.
-getAllFunctions :: IORef VState -> [TAFuncDecl] -> [QName] -> IO [TAFuncDecl]
-getAllFunctions vstref currfuncs newfuns = do
-  currmods <- readIORef vstref >>= return . currTAProgs
-  getAllFuncs currmods newfuns
- where
-  getAllFuncs _ [] = return (reverse currfuncs)
-  getAllFuncs currmods (newfun:newfuncs)
-    | newfun `elem` map (pre . fst) transPrimCons ++ map funcName currfuncs
-      || isPrimOp newfun
-    = getAllFunctions vstref currfuncs newfuncs
-    | fst newfun `elem` map progName currmods
-    = maybe
-        (-- if we don't find the qname, it must be a constructor:
-         getAllFunctions vstref currfuncs newfuncs)
-        (\fdecl -> getAllFunctions vstref
-                      (fdecl : currfuncs)
-                      (newfuncs ++ nub (funcsOfFuncDecl fdecl)))
-        (find (\fd -> funcName fd == newfun)
-              (progFuncs
-                 (fromJust (find (\m -> progName m == fst newfun) currmods))))
-    | otherwise -- we must load a new module
-    = do let mname = fst newfun
-         putStrLn $ "Loading module '" ++ mname ++ "' for '"++ snd newfun ++"'"
-         newmod <- readTypedFlatCurry mname
-         modifyIORef vstref (addProgToState newmod)
-         getAllFunctions vstref currfuncs (newfun:newfuncs)
 
 --- Returns the names of all functions/constructors occurring in the
 --- body of a function declaration.
@@ -136,70 +63,6 @@ ppTAExpr e = showWidth 200 (ppExp e)
 setAnnPattern :: TypeExpr -> TAPattern -> TAPattern
 setAnnPattern ann (ALPattern _ lit) = ALPattern ann lit
 setAnnPattern ann (APattern _ aqn vars) = APattern ann aqn vars
-
-----------------------------------------------------------------------------
---- Is a qualified FlatCurry name primitive?
-isPrimOp :: QName -> Bool
-isPrimOp (mn,fn) = mn=="Prelude" && fn `elem` map fst preludePrimOps
-
---- Primitive operations of the prelude and their SMT names.
-preludePrimOps :: [(String,String)]
-preludePrimOps = arithPrimOps ++
-  [("not","not")
-  ,("&&","and")
-  ,("||","or")
-  ,("otherwise","true")
-  ,("apply","apply") -- TODO...
-  ]
-
---- Primitive arithmetic operations of the prelude and their SMT names.
-arithPrimOps :: [(String,String)]
-arithPrimOps =
-  [("==","=")
-  ,("_impl#==#Prelude.Eq#Prelude.Int","=")
-  ,("_impl#==#Prelude.Eq#Prelude.Char","=")
-  ,("/=","/=")  -- will be translated as negated '='
-  ,("_impl#/=#Prelude.Eq#Prelude.Int","/=")
-  ,("_impl#/=#Prelude.Eq#Prelude.Char","/=")
-  ,("_impl#+#Prelude.Num#Prelude.Int","+")
-  ,("_impl#-#Prelude.Num#Prelude.Int","-")
-  ,("_impl#*#Prelude.Num#Prelude.Int","*")
-  ,("_impl#negate#Prelude.Num#Prelude.Int","-")
-  ,("_impl#div#Prelude.Integral#Prelude.Int","div")
-  ,("_impl#mod#Prelude.Integral#Prelude.Int","mod")
-  ,("_impl#rem#Prelude.Integral#Prelude.Int","rem")
-  ,("_impl#>#Prelude.Ord#Prelude.Int",">")
-  ,("_impl#<#Prelude.Ord#Prelude.Int","<")
-  ,("_impl#>=#Prelude.Ord#Prelude.Int",">=")
-  ,("_impl#<=#Prelude.Ord#Prelude.Int","<=")
-  ,("_impl#>#Prelude.Ord#Prelude.Float",">")
-  ,("_impl#<#Prelude.Ord#Prelude.Float","<")
-  ,("_impl#>=#Prelude.Ord#Prelude.Float",">=")
-  ,("_impl#<=#Prelude.Ord#Prelude.Float","<=")
-  ,("_impl#>#Prelude.Ord#Prelude.Char",">")
-  ,("_impl#<#Prelude.Ord#Prelude.Char","<")
-  ,("_impl#>=#Prelude.Ord#Prelude.Char",">=")
-  ,("_impl#<=#Prelude.Ord#Prelude.Char","<=")
-  ]
-
---- Some primitive constructors from the prelude and their SMT names.
-transPrimCons :: [(String,String)]
-transPrimCons =
-  [("True","true")
-  ,("False","false")
-  ,("[]","nil")
-  ,(":","insert")
-  ,("()","unit")
-  ,("(,)","mk-pair")
-  ,("LT","LT")
-  ,("EQ","EQ")
-  ,("GT","GT")
-  ,("Nothing","Nothing")
-  ,("Just","Just")
-  ,("Left","Left")
-  ,("Right","Right")
-  ] ++
-  map (\i -> ('(' : take (i-1) (repeat ',') ++ ")", "Tuple" ++ show i)) [3..15]
 
 ----------------------------------------------------------------------------
 --- Eta-expansion of user-defined function declarations.

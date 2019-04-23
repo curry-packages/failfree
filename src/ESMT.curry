@@ -13,7 +13,7 @@
 module ESMT where
 
 import List ( (\\), intercalate, isPrefixOf, union )
-import Unsafe
+
 import Data.FiniteMap
 import Text.Pretty
 

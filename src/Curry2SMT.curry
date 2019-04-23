@@ -13,15 +13,15 @@ import Maybe       ( catMaybes, fromJust, fromMaybe )
 import ReadNumeric ( readHex )
 
 -- Imports from dependencies:
-import FlatCurry.Annotated.Goodies ( argTypes, funcName, funcType, isComb
-                                   , resultType )
-import FlatCurry.Annotated.Types
-import FlatCurry.Annotated.TypeSubst
-import FlatCurry.Types ( showQName )
+import FlatCurry.Annotated.Goodies ( argTypes, resultType )
+import FlatCurry.Types             ( showQName )
 
 -- Imports from package modules:
 import ESMT
-import TypedFlatCurryGoodies
+import FlatCurry.Typed.Files   ( getAllFunctions )
+import FlatCurry.Typed.Goodies
+import FlatCurry.Typed.Names
+import FlatCurry.Typed.Types
 import VerifierState
 
 --- Translates a list of operations specified by their qualified name
@@ -179,17 +179,6 @@ tcons2SMT (mn,tc)
  = maybe (encodeSpecialChars tc) id (lookup tc transPrimTCons)
  | otherwise
  = mn ++ "_" ++ encodeSpecialChars tc
-
---- Primitive type constructors from the prelude and their SMT names.
-transPrimTCons :: [(String,String)]
-transPrimTCons =
-  [("Int","Int")
-  ,("Float","Real")
-  ,("Char","Int")  -- Char is represented as Int
-  ,("[]","List")
-  ,("()","Unit")
-  ,("(,)","Pair")
-  ]
 
 ----------------------------------------------------------------------------
 --- Translates a type declaration into an SMT datatype declaration.

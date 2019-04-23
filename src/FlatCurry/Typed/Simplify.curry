@@ -6,16 +6,16 @@
 --- @version April 2019
 ---------------------------------------------------------------------------
 
-module SimpFlatCurry where
+module FlatCurry.Typed.Simplify ( simpProg ) where
 
 import List ( find, isPrefixOf )
 
 -- Imports from dependencies:
 import FlatCurry.Annotated.Goodies
-import FlatCurry.Annotated.Types
-import FlatCurry.Types
 
-import TypedFlatCurryGoodies
+import FlatCurry.Typed.Goodies
+import FlatCurry.Typed.Names
+import FlatCurry.Typed.Types
 
 ----------------------------------------------------------------------------
 
