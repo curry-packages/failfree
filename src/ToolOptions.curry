@@ -1,8 +1,9 @@
 -------------------------------------------------------------------------
---- The options of the non-failing analysis tool.
+--- The options of the contract verification tool together with some
+--- related operations.
 ---
 --- @author Michael Hanus
---- @version March 2019
+--- @version April 2019
 -------------------------------------------------------------------------
 
 module ToolOptions

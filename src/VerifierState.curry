@@ -1,27 +1,74 @@
 module VerifierState where
 
-import List ( find )
+import IOExts
+import List   ( find, isSuffixOf )
 
-import FlatCurry.Annotated.Types
+import Contract.Names ( isNonFailName, isPreCondName, isPostCondName )
+import FlatCurry.Typed.Types
 import FlatCurry.Annotated.Goodies
+import ToolOptions
+
+---------------------------------------------------------------------------
+-- Some global information used by the verification process:
+data VerifyInfo = VerifyInfo
+  { toolOpts      :: Options      -- options passed to the tool
+  , allFuncs      :: [TAFuncDecl] -- all defined operations
+  , preConds      :: [TAFuncDecl] -- all precondition operations
+  , postConds     :: [TAFuncDecl] -- all postcondition operations
+  , nfConds       :: [TAFuncDecl] -- all non-failure condition operations
+  }
+
+initVerifyInfo :: Options -> VerifyInfo
+initVerifyInfo opts = VerifyInfo opts [] [] [] []
+
+addFunsToVerifyInfo :: [TAFuncDecl] -> VerifyInfo -> VerifyInfo
+addFunsToVerifyInfo fdecls ti =
+  ti { allFuncs  = fdecls    ++ allFuncs  ti
+     , preConds  = preconds  ++ preConds  ti
+     , postConds = postconds ++ postConds ti
+     , nfConds   = nfconds   ++ nfConds   ti
+     }
+ where
+  -- Precondition operations:
+  preconds  = filter (isPreCondName  . snd . funcName) fdecls
+  -- Postcondition operations:
+  postconds = filter (isPostCondName . snd . funcName) fdecls
+  -- Non-failure condition operations:
+  nfconds   = filter (isNonFailName  . snd . funcName) fdecls
+
+--- Is an operation name the name of a contract or similar?
+isContractOp :: QName -> Bool
+isContractOp (_,fn) = isNonFailName fn || isPreCondName fn || isPostCondName fn
+
+--- Is a function declaration a property?
+isProperty :: TAFuncDecl -> Bool
+isProperty fdecl =
+  resultType (funcType fdecl)
+    `elem` map (\tc -> TCons tc [])
+               [("Test.Prop","Prop"),("Test.EasyCheck","Prop")]
 
 ---------------------------------------------------------------------------
 -- The global state of the verification process keeps some
 -- statistical information and the programs that are already read (to
 -- avoid multiple readings).
 data VState = VState
-  { failedFuncs  :: [(String,String)] -- partially defined operations
+  { trInfo       :: VerifyInfo        -- information used by the verifier
+  , failedFuncs  :: [(String,String)] -- partially defined operations
                                       -- and their failing reason
   , numAllFuncs  :: Int               -- number of analyzed operations
   , numNFCFuncs  :: Int               -- number of operations with non-trivial
                                       -- non-failing conditions
   , numPatTests  :: Int               -- number of missing pattern tests
   , numFailTests :: Int               -- number of tests of failure calls
-  , currTAProgs  :: [AProg TypeExpr]  -- already read typed FlatCurry programs
+  , currTAProgs  :: [TAProg]          -- already read typed FlatCurry programs
   }
 
-initVState :: VState
-initVState = VState [] 0 0 0 0 []
+initVState :: VerifyInfo -> VState
+initVState info = VState info [] 0 0 0 0 []
+
+--- Reads VerifyInfo from VState IORef.
+readVerifyInfoRef :: IORef VState -> IO VerifyInfo
+readVerifyInfoRef vstref = readIORef vstref >>= return . trInfo
 
 --- Shows the statistics in human-readable format.
 showStats :: VState -> String

@@ -16,18 +16,24 @@ isPrimOp (mn,fn) = mn=="Prelude" && fn `elem` map fst preludePrimOps
 
 --- Primitive operations of the prelude and their SMT names.
 preludePrimOps :: [(String,String)]
-preludePrimOps = arithPrimOps ++
-  [("not","not")
-  ,("&&","and")
-  ,("||","or")
-  ,("otherwise","true")
+preludePrimOps = unaryPrimOps ++ binaryPrimOps ++
+  [("otherwise","true")
   ,("apply","apply") -- TODO...
   ]
 
---- Primitive arithmetic operations of the prelude and their SMT names.
-arithPrimOps :: [(String,String)]
-arithPrimOps =
-  [("==","=")
+--- Primitive unary operations of the prelude and their SMT names.
+unaryPrimOps :: [(String,String)]
+unaryPrimOps =
+  [("_impl#negate#Prelude.Num#Prelude.Int","-")
+  ,("not","not")
+  ]
+
+--- Primitive binary operations of the prelude and their SMT names.
+binaryPrimOps :: [(String,String)]
+binaryPrimOps =
+  [("&&","and")
+  ,("||","or")
+  ,("==","=")
   ,("_impl#==#Prelude.Eq#Prelude.Int","=")
   ,("_impl#==#Prelude.Eq#Prelude.Char","=")
   ,("/=","/=")  -- will be translated as negated '='

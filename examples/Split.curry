@@ -8,4 +8,5 @@ split p (x:xs) | p x       = [] : split p xs
                              -- TODO: improve let reasoning in tool...
                              (x : head (split p xs)) : tail (split p xs)
 
+split'post :: (a -> Bool) -> [a] -> [[a]] -> Bool
 split'post p xs ys = not (null ys)

@@ -18,7 +18,7 @@ import FlatCurry.Types             ( showQName )
 
 -- Imports from package modules:
 import ESMT
-import FlatCurry.Typed.Files   ( getAllFunctions )
+import FlatCurry.Typed.Read    ( getAllFunctions )
 import FlatCurry.Typed.Goodies
 import FlatCurry.Typed.Names
 import FlatCurry.Typed.Types

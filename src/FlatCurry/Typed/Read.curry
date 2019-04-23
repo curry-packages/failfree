@@ -5,7 +5,7 @@
 --- @version April 2019
 ---------------------------------------------------------------------------
 
-module FlatCurry.Typed.Files where
+module FlatCurry.Typed.Read where
 
 import FilePath     ( (</>) )
 import IOExts
@@ -38,19 +38,17 @@ readSimpTypedFlatCurryWithSpec opts mname =
 --- (containing further contracts).
 readTypedFlatCurryWithSpec :: Options -> String -> IO TAProg
 readTypedFlatCurryWithSpec opts mname = do
-  whenStatus opts $ putStr $
-    "Loading typed FlatCurry program '" ++ mname ++ "'..."
+  printWhenStatus opts $ "Loading typed FlatCurry program '" ++ mname ++ "'"
   prog     <- readTypedFlatCurry mname
   loadpath <- getLoadPathForModule specName
   mbspec   <- lookupModuleSource (loadpath ++ [packagePath </> "include"])
                                  specName
-  maybe ( whenStatus opts (putStrLn "done") >> return prog )
+  maybe (return prog)
         (\ (_,specname) -> do
            let specpath = stripCurrySuffix specname
-           when (optVerb opts > 0) $ putStr $
-             "'" ++ (if optVerb opts > 1 then specpath else specName) ++ "'..."
+           printWhenStatus opts $ "Adding '" ++
+             (if optVerb opts > 1 then specpath else specName) ++ "'"
            specprog <- readTypedFlatCurry specpath
-           whenStatus opts $ putStrLn "done"
            return (unionTAProg prog (rnmProg mname specprog))
         )
         mbspec
@@ -82,8 +80,10 @@ getAllFunctions vstref currfuncs newfuns = do
                  (fromJust (find (\m -> progName m == fst newfun) currmods))))
     | otherwise -- we must load a new module
     = do let mname = fst newfun
-         putStrLn $ "Loading module '" ++ mname ++ "' for '"++ snd newfun ++"'"
-         newmod <- readTypedFlatCurry mname
+         opts <- readVerifyInfoRef vstref >>= return . toolOpts
+         printWhenStatus opts $
+           "Loading module '" ++ mname ++ "' for '"++ snd newfun ++"'"
+         newmod <- readTypedFlatCurry mname >>= return . simpProg
          modifyIORef vstref (addProgToState newmod)
          getAllFunctions vstref currfuncs (newfun:newfuncs)
 

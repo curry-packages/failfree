@@ -31,9 +31,10 @@ import ShowFlatCurry                 ( showCurryModule )
 import System.Path                   ( fileInPath )
 
 -- Imports from package modules:
+import Contract.Usage ( checkContractUsage )
 import ESMT
 import Curry2SMT
-import FlatCurry.Typed.Files
+import FlatCurry.Typed.Read
 import FlatCurry.Typed.Goodies
 import FlatCurry.Typed.Names
 import FlatCurry.Typed.Types
@@ -78,7 +79,7 @@ main = do
           verifyNonFailingModules opts [] progs
         else do
           putStrLn "NON-FAILING ANALYSIS SKIPPED:"
-          putStrLn "The SMT solver Z3 is required for the analyzer to work"
+          putStrLn "The SMT solver Z3 is required for the verifier to work"
           putStrLn "but the program 'z3' is not found on the PATH!"
           exitWith 1
 
@@ -105,17 +106,21 @@ verifyNonFailingMod :: Options -> String -> IO ()
 verifyNonFailingMod opts modname = do
   printWhenStatus opts $ "Analyzing module '" ++ modname ++ "':"
   prog <- readSimpTypedFlatCurryWithSpec opts modname
+  let errs = checkContractUsage prog
+  unless (null errs) $ do
+    putStr $ unlines (map showOpError errs)
+    exitWith 1
   impprogs <- mapIO (readSimpTypedFlatCurryWithSpec opts) (progImports prog)
   let allprogs = prog : impprogs
-  let vstate = foldr addProgToState initVState allprogs
-      tinfo  = foldr addFunsToTransInfo (initTransInfo opts)
+      vinfo  = foldr addFunsToVerifyInfo (initVerifyInfo opts)
                      (map progFuncs allprogs)
+      vstate = foldr addProgToState (initVState vinfo) allprogs
   siblingconsinfo <- loadAnalysisWithImports siblingCons prog
   pi1 <- getProcessInfos
   printWhenAll opts $ unlines $
     ["ORIGINAL PROGRAM:", line, showCurryModule (unAnnProg prog), line]
   vstref <- newIORef vstate
-  proveNonFailingFuncs opts siblingconsinfo tinfo vstref (progFuncs prog)
+  proveNonFailingFuncs opts siblingconsinfo vstref (progFuncs prog)
   stats <- readIORef vstref
   pi2 <- getProcessInfos
   let tdiff = maybe 0 id (lookup ElapsedTime pi2) -
@@ -127,6 +132,9 @@ verifyNonFailingMod opts modname = do
  where
   line = take 78 (repeat '-')
 
+  showOpError (qf,err) =
+    snd qf ++ " (module " ++ fst qf ++ "): " ++ err
+
 -- Loads CASS analysis results for a module and its imported entities.
 loadAnalysisWithImports :: Analysis a -> TAProg -> IO (ProgInfo a)
 loadAnalysisWithImports analysis prog = do
@@ -136,48 +144,6 @@ loadAnalysisWithImports analysis prog = do
                                                      return . either id error)
                     (progImports prog)
   return $ foldr combineProgInfo maininfo impinfos
-
----------------------------------------------------------------------------
--- Some global information used by the transformation process:
-data TransInfo = TransInfo
-  { toolOpts      :: Options      -- options passed to all defined operations
-  , allFuncs      :: [TAFuncDecl] -- all defined operations
-  , preConds      :: [TAFuncDecl] -- all precondition operations
-  , postConds     :: [TAFuncDecl] -- all postcondition operations
-  , nfConds       :: [TAFuncDecl] -- all non-failure condition operations
-  }
-
-initTransInfo :: Options -> TransInfo
-initTransInfo opts = TransInfo opts [] [] [] []
-
-addFunsToTransInfo :: [TAFuncDecl] -> TransInfo -> TransInfo
-addFunsToTransInfo fdecls ti =
-  ti { allFuncs  = fdecls    ++ allFuncs  ti
-     , preConds  = preconds  ++ preConds  ti
-     , postConds = postconds ++ postConds ti
-     , nfConds   = nfconds   ++ nfConds   ti
-     }
- where
-  -- Precondition operations:
-  preconds  = filter (\fd -> "'pre"     `isSuffixOf` snd (funcName fd)) fdecls
-  -- Postcondition operations:
-  postconds = filter (\fd -> "'post"    `isSuffixOf` snd (funcName fd)) fdecls
-  -- Non-failure condition operations:
-  nfconds   = filter (\fd -> "'nonfail" `isSuffixOf` snd (funcName fd)) fdecls
-
---- Is an operation name the name of a contract or similar?
-isContractOp :: QName -> Bool
-isContractOp (_,fn) =
-  "'nonfail" `isSuffixOf` fn ||
-  "'pre"     `isSuffixOf` fn ||
-  "'post"    `isSuffixOf` fn
-
---- Is a function declaration a property?
-isProperty :: TAFuncDecl -> Bool
-isProperty fdecl =
-  resultType (funcType fdecl)
-    `elem` map (\tc -> TCons tc [])
-               [("Test.Prop","Prop"),("Test.EasyCheck","Prop")]
 
 ---------------------------------------------------------------------------
 -- The state of the transformation process contains
@@ -204,46 +170,48 @@ addVarTypes vts st = st { varTypes = vts ++ varTypes st }
 ---------------------------------------------------------------------------
 -- Prove that a list of defined functions is fail free (w.r.t. their
 -- non-fail conditions).
-proveNonFailingFuncs :: Options -> ProgInfo [(QName,Int)] -> TransInfo
-                     -> IORef VState -> [TAFuncDecl] -> IO ()
-proveNonFailingFuncs opts siblingconsinfo ti vstref =
-  mapIO_ (proveNonFailingFunc opts siblingconsinfo ti vstref)
+proveNonFailingFuncs :: Options -> ProgInfo [(QName,Int)] -> IORef VState
+                     -> [TAFuncDecl] -> IO ()
+proveNonFailingFuncs opts siblingconsinfo vstref =
+  mapIO_ (proveNonFailingFunc opts siblingconsinfo vstref)
 
 -- Prove that a function is fail free (w.r.t. their non-fail condition).
-proveNonFailingFunc :: Options -> ProgInfo [(QName,Int)] -> TransInfo
-                    -> IORef VState -> TAFuncDecl -> IO ()
-proveNonFailingFunc opts siblingconsinfo ti vstref fdecl =
+proveNonFailingFunc :: Options -> ProgInfo [(QName,Int)] -> IORef VState
+                    -> TAFuncDecl -> IO ()
+proveNonFailingFunc opts siblingconsinfo vstref fdecl =
   unless (isContractOp (funcName fdecl) || isProperty fdecl) $ do
     printWhenIntermediate opts $
       "Operation to be analyzed: " ++ snd (funcName fdecl)
     modifyIORef vstref incNumAllInStats
     let efdecl = etaExpandFuncDecl fdecl
-    proveNonFailingRule opts siblingconsinfo ti vstref
+    proveNonFailingRule opts siblingconsinfo vstref
                         (funcName efdecl) (funcType efdecl)
                         (funcRule efdecl)
 
 -- Prove that a function rule is fail free (w.r.t. their non-fail condition).
 -- The rule is in eta-expanded form.
-proveNonFailingRule :: Options -> ProgInfo [(QName,Int)] -> TransInfo
-                    -> IORef VState -> QName -> TypeExpr -> TARule -> IO ()
-proveNonFailingRule _ _ ti vstref qn ftype (AExternal _ _) = do
+proveNonFailingRule :: Options -> ProgInfo [(QName,Int)] -> IORef VState
+                    -> QName -> TypeExpr -> TARule -> IO ()
+proveNonFailingRule _ _ vstref qn ftype (AExternal _ _) = do
+  ti <- readVerifyInfoRef vstref
   let atypes = argTypes ftype
       args   = zip [1 .. length atypes] atypes
-  let (nfcond,_)  = nonfailPreCondExpOf ti qn ftype args (makeTransState 0 [])
+      (nfcond,_)  = nonfailPreCondExpOf ti qn ftype args (makeTransState 0 [])
   unless (nfcond == tTrue) $ modifyIORef vstref incNumNFCInStats
-proveNonFailingRule opts siblingconsinfo ti vstref qn@(_,fn) ftype
+proveNonFailingRule opts siblingconsinfo vstref qn@(_,fn) ftype
                     (ARule _ rargs rhs) = do
+  ti <- readVerifyInfoRef vstref
   let -- compute non-fail precondition of operation:
       s0 = makeTransState (maximum (0 : map fst rargs ++ allVars rhs) + 1) rargs
       (precondformula,s1)  = nonfailPreCondExpOf ti qn ftype rargs s0
       s2 = s1 { preCond = precondformula }
   unless (precondformula == tTrue)  $ modifyIORef vstref incNumNFCInStats
   -- verify only if the precondition is different from always failing:
-  unless (precondformula == tFalse) $ proveNonFailExp s2 rhs
+  unless (precondformula == tFalse) $ proveNonFailExp ti s2 rhs
  where
-  proveNonFailExp pts exp = case simpExpr exp of
+  proveNonFailExp ti pts exp = case simpExpr exp of
     AComb _ ct (qf,qfty) args -> do
-      mapIO_ (proveNonFailExp pts) args
+      mapIO_ (proveNonFailExp ti pts) args
       when (isCombTypeFuncPartCall ct) $
         let qnnonfail = toNonFailQName qf
         in maybe done -- h.o. call nonfailing if op. has no non-fail cond.
@@ -278,7 +246,7 @@ proveNonFailingRule opts siblingconsinfo ti vstref qn@(_,fn) ftype
             printWhenIntermediate opts $
               fn ++ ": POSSIBLY FAILING CALL OF '" ++ snd qf ++ "'"
     ACase _ _ e brs -> do
-      proveNonFailExp pts e
+      proveNonFailExp ti pts e
       maybe
        (-- check a case expression for missing constructors:
         let freshvar = freshVar pts
@@ -288,25 +256,25 @@ proveNonFailingRule opts siblingconsinfo ti vstref qn@(_,fn) ftype
                         , varTypes = freshtypedvar : varTypes pts1 }
             misscons = missingConsInBranch siblingconsinfo brs
         in do mapIO_ (verifyMissingCons pts2 freshtypedvar exp) misscons
-              mapIO_ (proveNonFailBranch pts2 freshtypedvar) brs
+              mapIO_ (proveNonFailBranch ti pts2 freshtypedvar) brs
        )
        (\ (fe,te) ->
            -- check a Boolean case with True/False branch:
            let (be,pts1) = pred2SMT e pts
                ptsf = pts1 { preCond = tConj [preCond pts, tNot be] }
                ptst = pts1 { preCond = tConj [preCond pts, be] }
-           in do proveNonFailExp ptsf fe
-                 proveNonFailExp ptst te
+           in do proveNonFailExp ti ptsf fe
+                 proveNonFailExp ti ptst te
        )
        (testBoolCase brs)
-    AOr _ e1 e2 -> do proveNonFailExp pts e1
-                      proveNonFailExp pts e2
+    AOr _ e1 e2 -> do proveNonFailExp ti pts e1
+                      proveNonFailExp ti pts e2
     ALet _ bs e -> do let ((rbs,re), pts1) = renameLetVars pts bs e
-                      mapIO_ (proveNonFailExp pts1) (map snd rbs)
-                      proveNonFailExp pts1 re
+                      mapIO_ (proveNonFailExp ti pts1) (map snd rbs)
+                      proveNonFailExp ti pts1 re
     AFree _ fvs e -> do let ((_,re), pts1) = renameFreeVars pts fvs e
-                        proveNonFailExp pts1 re
-    ATyped _ e _ -> proveNonFailExp pts e
+                        proveNonFailExp ti pts1 re
+    ATyped _ e _ -> proveNonFailExp ti pts e
     AVar _ _ -> done
     ALit _ _ -> done
 
@@ -329,12 +297,12 @@ proveNonFailingRule opts siblingconsinfo ti vstref qn@(_,fn) ftype
         "POSSIBLY FAILING BRANCH in function '" ++ fn ++
         "' with constructor " ++ snd cons
 
-  proveNonFailBranch pts (var,vartype) branch = do
+  proveNonFailBranch ti pts (var,vartype) branch = do
     let (ABranch p e, pts1) = renamePatternVars pts branch
         -- set pattern type correctly (important for [] pattern)
         bpat = pat2smt (setAnnPattern vartype p)
         npts = pts1 { preCond = tConj [preCond pts1, tEquVar var bpat] }
-    proveNonFailExp npts e
+    proveNonFailExp ti npts e
 
 -- Returns the constructors (name/arity) which are missing in the given
 -- branches of a case construct.
@@ -372,7 +340,7 @@ simpExpr exp = case exp of
 -- Moreover, the returned state contains also the types of all fresh variables.
 -- If the first argument is `False`, the expression is not strictly demanded,
 -- i.e., possible contracts of it (if it is a function call) are ignored.
-binding2SMT :: Bool -> TransInfo -> (Int,TAExpr) -> State TransState Term
+binding2SMT :: Bool -> VerifyInfo -> (Int,TAExpr) -> State TransState Term
 binding2SMT demanded ti (resvar,exp) =
  case simpExpr exp of
   AVar _ i -> returnS $ if resvar==i then tTrue
@@ -448,7 +416,7 @@ binding2SMT demanded ti (resvar,exp) =
 -- (if the tool option `contract` is set) expression for a given operation
 -- and its arguments (which are assumed to be variable indices).
 -- Rename all local variables by adding the `freshvar` index to them.
-nonfailPreCondExpOf :: TransInfo -> QName -> TypeExpr -> [(Int,TypeExpr)]
+nonfailPreCondExpOf :: VerifyInfo -> QName -> TypeExpr -> [(Int,TypeExpr)]
                     -> State TransState Term
 nonfailPreCondExpOf ti qf ftype args =
   if optContract (toolOpts ti)
@@ -463,7 +431,7 @@ nonfailPreCondExpOf ti qf ftype args =
 -- All local variables are renamed by adding the `freshvar` index to them.
 -- If the non-failure condition requires more arguments (due to a
 -- higher-order call), fresh arguments are added which are also returned.
-nonfailCondExpOf :: TransInfo -> QName -> TypeExpr -> [(Int,TypeExpr)]
+nonfailCondExpOf :: VerifyInfo -> QName -> TypeExpr -> [(Int,TypeExpr)]
                  -> State TransState ([(Int,TypeExpr)], Term)
 nonfailCondExpOf ti qf ftype args =
   maybe
@@ -492,7 +460,7 @@ nonfailCondExpOf ti qf ftype args =
 -- Returns the precondition expression for a given operation
 -- and its arguments (which are assumed to be variable indices).
 -- Rename all local variables by adding the `freshvar` index to them.
-preCondExpOf :: TransInfo -> QName -> [(Int,TypeExpr)] -> State TransState Term
+preCondExpOf :: VerifyInfo -> QName -> [(Int,TypeExpr)] -> State TransState Term
 preCondExpOf ti qf args =
   maybe (returnS tTrue)
         (\fd -> applyFunc fd args `bindS` pred2SMT)
@@ -502,7 +470,8 @@ preCondExpOf ti qf args =
 -- and its arguments (which are assumed to be variable indices).
 -- Rename all local variables by adding `freshvar` to them and
 -- return the new freshvar value.
-postCondExpOf :: TransInfo -> QName -> [(Int,TypeExpr)] -> State TransState Term
+postCondExpOf :: VerifyInfo -> QName -> [(Int,TypeExpr)]
+              -> State TransState Term
 postCondExpOf ti qf args =
   maybe (returnS tTrue)
         (\fd -> applyFunc fd args `bindS` pred2SMT)
@@ -525,7 +494,7 @@ applyFunc fdecl targs s0 =
       exp = rnmAllVars (renameRuleVar orgargs) orgexp
       s1  = s0 { freshVar = max (freshVar s0)
                                 (maximum (0 : args ++ allVars exp) + 1) }
-  in (applyArgs exp (drop (length orgargs) args), s1)
+  in (simpExpr $ applyArgs exp (drop (length orgargs) args), s1)
  where
   args = map fst targs
   -- renaming function for variables in original rule:
@@ -538,7 +507,7 @@ applyFunc fdecl targs s0 =
     -- simple hack for eta-expansion since the type annotations are not used:
     -- TODO: compute correct type annotations!!! (required for overloaded nils)
     let e_v =  AComb failed FuncCall
-                     (("Prelude","apply"),failed) [e, AVar failed v]
+                     (pre "apply", failed) [e, AVar failed v]
     in applyArgs e_v vs
 
 -- Translates a Boolean FlatCurry expression into a Boolean formula.
@@ -575,7 +544,8 @@ pred2SMT exp = case simpExpr exp of
       returnS (tNot be)
     | otherwise
     = mapS pred2SMT args `bindS` \bargs ->
-      returnS (TComb (cons2SMT (ct /= ConsCall || not (null bargs)) False qf ftype)
+      returnS (TComb (cons2SMT (ct /= ConsCall || not (null bargs))
+                               False qf ftype)
                      bargs)
 
   typeOfVar tstate e = case e of

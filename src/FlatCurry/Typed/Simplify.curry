@@ -6,7 +6,7 @@
 --- @version April 2019
 ---------------------------------------------------------------------------
 
-module FlatCurry.Typed.Simplify ( simpProg ) where
+module FlatCurry.Typed.Simplify ( simpProg, simpExpr ) where
 
 import List ( find, isPrefixOf )
 
@@ -85,8 +85,9 @@ simpClassEq exp = case exp of
    -> AComb ty FuncCall (pre "==", dropArgTypes 1 eqty) [e1,e2]
   _ -> exp
 
---- Simplify arithmetic expressions, i.e.,
+--- Simplify applications of primitive operations, i.e.,
 ---     apply (apply op e1) e2 ==> op [e1,e2]
+---     apply op e1            ==> op [e1]
 simpArithExp :: TAExpr -> TAExpr
 simpArithExp exp = case exp of
   AComb ty FuncCall (qt1,_)
@@ -95,7 +96,13 @@ simpArithExp exp = case exp of
    | qt1 == pre "apply" && qt2 == pre "apply" && mn == "Prelude"
    -> maybe exp
             (\_ -> AComb ty FuncCall ((mn,fn), dropArgTypes 1 opty) [e1,e2])
-            (lookup fn arithPrimOps)
+            (lookup fn binaryPrimOps)
+  AComb ty FuncCall (qt1,_)
+        [AComb _ FuncCall ((mn,fn),opty) [], e1]
+   | qt1 == pre "apply" && mn == "Prelude"
+   -> maybe exp
+            (\_ -> AComb ty FuncCall ((mn,fn),opty) [e1])
+            (lookup fn unaryPrimOps)
   _ -> exp
 
 ----------------------------------------------------------------------------
