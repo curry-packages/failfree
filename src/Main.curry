@@ -565,13 +565,6 @@ pred2SMT exp = case simpExpr exp of
          returnS (tEqu barg
                        (sortedConst "nil"
                                     (polytype2sort (typeOfVar tstate arg))))
-    | qf == pre "apply" && ar == 2 && isComb (head args)
-    = -- "defunctionalization": if the first argument is a
-      -- combination, append the second argument to its arguments
-      mapS pred2SMT args `bindS` \bargs ->
-      case bargs of
-        [TComb bn bas, barg2] -> returnS (TComb bn (bas++[barg2]))
-        _ -> returnS (tComb (show exp) []) -- no translation possible
     | qf == pre "apply"
     = -- cannot translate h.o. apply: replace it by new variable
       getS `bindS` \ts ->
@@ -762,7 +755,6 @@ testBoolCase brs =
 Still to be done:
 
 - consider encapsulated search
-- type-specialize polymorphic operations when axiomatizing them in SMT
 
 
 Verified system libraries:
@@ -777,20 +769,5 @@ Verified system libraries:
 - ShowS
 
  Prelude Char Either ErrorState Integer Maybe State ShowS
-
-
-Version without type classes:
-- Prelude
-- AnsiCodes
-- Either
-- ErrorState
-- Integer
-- Maybe
-- State
-- Nat
-- ShowS
-- Socket
-- Array
-- Char
 
 -}

@@ -53,27 +53,12 @@ fun2SMT (AFunc qn _ _ texp rule) =
     lhs = tComb (transOpName qn) (map (TSVar . fst) vs)
 
 
--- Since basic arithmetic operations are represented in FlatCurry
--- via access to class dictionaries and `apply` operations,
--- this operations transforms them into standard function calls
--- so that they can be translated into SMT formulas.
-simpArith :: TAExpr -> TAExpr
-simpArith exp = case exp of
-  AComb _ FuncCall (qf,_) args | qf == pre "apply" && isComb (head args)
-    -> -- "defunctionalization": if the first argument is a
-       -- combination, append the second argument to its arguments
-       case map simpArith args of -- TODO: correct typing!
-         [AComb ty ct bn bas, barg2] | isPrimOp (fst bn)
-           -> AComb ty ct bn (bas++[barg2])
-         _ -> exp -- no translation possible
-  _ -> exp
-
 -- Translates a typed FlatCurry expression into an SMT expression.
 -- If the first argument is an SMT expression, an equation between
 -- this expression and the translated result expression is generated.
 -- This is useful to axiomatize non-deterministic operations.
 exp2SMT :: Maybe Term -> TAExpr -> Term
-exp2SMT lhs exp = case simpArith exp of
+exp2SMT lhs exp = case exp of
   AVar _ i          -> makeRHS (TSVar i)
   ALit _ l          -> makeRHS (lit2smt l)
   AComb _ ct (qn,ftype) args ->

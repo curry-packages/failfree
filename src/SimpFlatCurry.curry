@@ -29,6 +29,7 @@ simpProg = updProgExps simpExpr
 ---       case otherwise of { True -> e1 ; False -> e2 } ==> e1
 --- * simplify application of `Prelude.$`:
 ---       f $ e ==> f e
+--- * simplify `Prelude.apply` for partially applied first arguments
 simpExpr :: TAExpr -> TAExpr
 simpExpr exp = case exp of
   AVar   _ _ -> exp
@@ -43,25 +44,29 @@ simpExpr exp = case exp of
   AFree  ty vs e -> AFree  ty vs (simpExpr e)
  where
   simpComb ty ct (qf, qt) args
-   -- simplify application of `Prelude.$`:
-   | qf == pre "$" && length args == 2
+   -- simplify application of `Prelude.apply` to partially applied functions:
+   | qf == pre "apply" && length args == 2
    = case head args of
        AComb _ (FuncPartCall n) qft1 fargs ->
-            AComb ty (if n==1 then FuncCall else FuncPartCall (n-1)) qft1
-                  (fargs ++ [args!!1])
-       _ -> AComb  ty ct (qf,qt) args
+            simpComb ty (if n==1 then FuncCall else FuncPartCall (n-1)) qft1
+                     (fargs ++ [args!!1])
+       _ -> moreSimpComb (AComb  ty ct (qf,qt) args)
+   -- inline application of `Prelude.$`:
+   | qf == pre "$"
+   = simpComb ty ct (pre "apply", qt) args
    -- simplify equality instance on lists:
    | ct == FuncCall && qf == pre "_impl#==#Prelude.Eq#[]"
-   = AComb ty ct (pre "==", dropArgTypes 1 qt {- TODO: remove first type arg -} )
-                 (tail args)
+   = AComb ty ct (pre "==", dropArgTypes 1 qt) (tail args)
    -- simplify equal class calls:
    | otherwise
-   = simpArithExp (simpClassEq (AComb ty ct (qf,qt) args))
+   = moreSimpComb (AComb ty ct (qf,qt) args)
+
+  moreSimpComb e = simpArithExp (simpClassEq e)
 
   simpBranch (ABranch p e) = ABranch p (simpExpr e)
 
   isOtherwise e = case e of AComb _ _ (qf,_) _ -> qf == pre "otherwise"
-                            _ -> False
+                            _                  -> False
 
   trueBranch brs =
     maybe (error "simpExpr: Branch with True pattern does not exist!")
