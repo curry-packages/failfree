@@ -9,6 +9,7 @@ module Main where
 
 import Directory    ( doesFileExist )
 import FilePath     ( (</>) )
+import Integer      ( ilog )
 import IOExts
 import List         ( (\\), elemIndex, find, isPrefixOf, isSuffixOf
                     , maximum, minimum, partition, splitOn, union )
@@ -232,7 +233,9 @@ proveNonFailingRule opts siblingconsinfo vstref qn@(_,fn) ftype
                    then return (Just True) -- true non-fail cond. is valid
                    else do
                      modifyIORef vstref incFailTestInStats
-                     checkImplicationWithSMT opts vstref (varTypes pts3)
+                     let title = "SMT script to verify non-failing call of '" ++
+                                 snd qf ++ "' in function '" ++ fn ++ "'"
+                     checkImplicationWithSMT opts vstref title (varTypes pts3)
                           (preCond pts) (tConj bindexps) nfcondcall
         if valid == Just True
           then do
@@ -281,12 +284,16 @@ proveNonFailingRule opts siblingconsinfo vstref qn@(_,fn) ftype
   -- verify whether a variable (2. argument) can have the constructor (3. arg.)
   -- as a value w.r.t. the collected assertions
   verifyMissingCons pts (var,vartype) exp (cons,_) = do
+    let title = "check missing constructor case '" ++ snd cons ++
+                "' in function '" ++ fn ++ "'"
     printWhenIntermediate opts $
-      fn ++ ": checking missing constructor case '" ++ snd cons ++ "'"
-       ++ "VAR: " ++ show (var,vartype) ++ "\nCASE:: " ++ show (unAnnExpr (simpExpr exp))
+      title ++ "\nVAR: " ++ show (var,vartype) ++ "\nCASE:: " ++
+      show (unAnnExpr (simpExpr exp))
     modifyIORef vstref incPatTestInStats
-    valid <- checkImplicationWithSMT opts vstref (varTypes pts) (preCond pts)
-                tTrue (tNot (constructorTest False cons (TSVar var) vartype))
+    
+    valid <- checkImplicationWithSMT opts vstref ("SMT script to " ++ title)
+               (varTypes pts) (preCond pts) tTrue
+               (tNot (constructorTest False cons (TSVar var) vartype))
     unless (valid == Just True) $ do
       let reason = if valid == Nothing
                      then "due to SMT error"
@@ -628,9 +635,10 @@ renamePatternVars pts (ABranch p e) =
 ---------------------------------------------------------------------------
 -- Calls the SMT solver to check whether an assertion implies some
 -- property.
-checkImplicationWithSMT :: Options -> IORef VState -> [(Int,TypeExpr)]
+checkImplicationWithSMT :: Options -> IORef VState -> String -> [(Int,TypeExpr)]
                         -> Term -> Term -> Term -> IO (Maybe Bool)
-checkImplicationWithSMT opts vstref vartypes assertion impbindings imp = do
+checkImplicationWithSMT opts vstref scripttitle vartypes
+                        assertion impbindings imp = do
   let (pretypes,usertypes) =
          partition ((== "Prelude") . fst)
                    (foldr union [] (map (tconsOfTypeExpr . snd) vartypes))
@@ -667,8 +675,8 @@ checkImplicationWithSMT opts vstref vartypes assertion impbindings imp = do
               ]
   --putStrLn $ "SMT commands as Curry term:\n" ++ show smt
   smtprelude <- readFile (packagePath </> "include" </> "Prelude.smt")
-  let smtinput = smtprelude ++ showSMT smt
-  printWhenAll opts $ unlines ["SMT SCRIPT:", line, smtinput, line]
+  let smtinput = "; " ++ scripttitle ++ "\n\n" ++ smtprelude ++ showSMT smt
+  printWhenAll opts $ "SMT SCRIPT:\n" ++ showWithLineNums smtinput
   printWhenAll opts $ "CALLING Z3 (with options: -smt2 -T:5)..."
   (ecode,out,err) <- evalCmd "z3" ["-smt2", "-in", "-T:5"] smtinput
   when (ecode>0) $ do printWhenAll opts $ "EXIT CODE: " ++ show ecode
@@ -715,6 +723,14 @@ testBoolCase brs =
       if c1 == pre "False" && c2 == pre "True"  then Just (e1,e2) else
       if c1 == pre "True"  && c2 == pre "False" then Just (e2,e1) else Nothing
     _ -> Nothing
+
+--- Shows a text with line numbers prefixed:
+showWithLineNums :: String -> String
+showWithLineNums txt =
+  let txtlines  = lines txt
+      maxlog    = ilog (length txtlines + 1)
+      showNum n = (take (maxlog - ilog n) (repeat ' ')) ++ show n ++ ": "
+  in unlines . map (uncurry (++)) . zip (map showNum [1..]) $ txtlines
 
 ---------------------------------------------------------------------------
 
