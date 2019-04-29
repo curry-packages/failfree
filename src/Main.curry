@@ -22,8 +22,10 @@ import Analysis.ProgInfo
 import Analysis.TotallyDefined ( siblingCons )
 import Analysis.Types
 import Contract.Names
+import Contract.Usage          ( checkContractUsage )
 import CASS.Server             ( analyzeGeneric, analyzePublic )
 import Debug.Profile
+import FlatCurry.Annotated.Goodies   ( funcName, funcType, progFuncs )
 import FlatCurry.Annotated.TypeSubst ( substRule )
 import FlatCurry.Files               ( readFlatCurryInt )
 import FlatCurry.Types
@@ -32,7 +34,6 @@ import ShowFlatCurry                 ( showCurryModule )
 import System.Path                   ( fileInPath )
 
 -- Imports from package modules:
-import Contract.Usage ( checkContractUsage )
 import ESMT
 import Curry2SMT
 import FlatCurry.Typed.Read
@@ -107,7 +108,8 @@ verifyNonFailingMod :: Options -> String -> IO ()
 verifyNonFailingMod opts modname = do
   printWhenStatus opts $ "Analyzing module '" ++ modname ++ "':"
   prog <- readSimpTypedFlatCurryWithSpec opts modname
-  let errs = checkContractUsage prog
+  let errs = checkContractUsage modname
+               (map (\fd -> (snd (funcName fd), funcType fd)) (progFuncs prog))
   unless (null errs) $ do
     putStr $ unlines (map showOpError errs)
     exitWith 1
