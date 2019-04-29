@@ -25,7 +25,6 @@ import Contract.Names
 import Contract.Usage          ( checkContractUsage )
 import CASS.Server             ( analyzeGeneric, analyzePublic )
 import Debug.Profile
-import FlatCurry.Annotated.Goodies   ( funcName, funcType, progFuncs )
 import FlatCurry.Annotated.TypeSubst ( substRule )
 import FlatCurry.Files               ( readFlatCurryInt )
 import FlatCurry.Types
@@ -61,7 +60,7 @@ testcv = verifyNonFailingMod defaultOptions { optVerb = 3, optContract = True }
 banner :: String
 banner = unlines [bannerLine,bannerText,bannerLine]
  where
-   bannerText = "Fail-Free Verification Tool for Curry (Version of 23/04/19)"
+   bannerText = "Fail-Free Verification Tool for Curry (Version of 29/04/19)"
    bannerLine = take (length bannerText) (repeat '=')
 
 ---------------------------------------------------------------------------
@@ -108,7 +107,7 @@ verifyNonFailingMod :: Options -> String -> IO ()
 verifyNonFailingMod opts modname = do
   printWhenStatus opts $ "Analyzing module '" ++ modname ++ "':"
   prog <- readSimpTypedFlatCurryWithSpec opts modname
-  let errs = checkContractUsage modname
+  let errs = checkContractUsage (progName prog)
                (map (\fd -> (snd (funcName fd), funcType fd)) (progFuncs prog))
   unless (null errs) $ do
     putStr $ unlines (map showOpError errs)
