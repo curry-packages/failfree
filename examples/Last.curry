@@ -1,4 +1,5 @@
 --- Returns the last element of a non-empty list.
+last'nonfail :: [a] -> Bool
 last'nonfail xs = not (null xs)
 
 last :: [a] -> a
@@ -6,6 +7,7 @@ last [x]            = x
 last (_ : xs@(_:_)) = last xs
 
 --- Returns the input list with the last element removed.
+init'nonfail :: [a] -> Bool
 init'nonfail xs = not (null xs)
 
 init :: [a] -> [a]

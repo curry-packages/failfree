@@ -1,3 +1,4 @@
+readCommand :: IO ()
 readCommand = do
   putStr "Input a command:"
   s <- getLine

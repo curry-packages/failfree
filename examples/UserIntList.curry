@@ -10,6 +10,7 @@ isNull (Cons _ _) = False
 head :: MyList -> Int
 head (Cons x _) = x
 
+head'nonfail :: MyList -> Bool
 head'nonfail xs = not (isNull xs)
 
 main :: Int

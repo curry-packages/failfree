@@ -1,15 +1,15 @@
---{-# OPTIONS_CYMAKE -F --pgmF=currypp --optF=contracts #-}
+--- Verification of average operation
+--- The verification requires option `--contract`!
 
--- Verification of average operation
-
-average :: [Int] -> Int
 -- This simple definition contains a possible failure:
 --
 --      average xs = sum xs `div` length xs
 --
 -- This non-failing definition requires the postcondition of length, i.e.,
 -- it can be verified as fail-free with option --contract|-c
-average xs = if null xs then 0 else sum xs `div` length xs
+average :: [Int] -> Int
+average xs = if null xs then 0
+                        else sum xs `div` length xs
 
 -- From library `List`:
 sum :: [Int] -> Int

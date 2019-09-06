@@ -89,8 +89,8 @@ Notes:
 
 - Contracts and non-fail conditions can also be stored in separate
   files. When checking a module `m`, if there is a Curry module `m_SPEC`
-  in the load path, the contents of `m_SPEC` is added to `m` before
-  it is checked.
+  in the load path for module `m` or in the package directory `include`,
+  the contents of `m_SPEC` is added to `m` before it is checked.
 
 - Non-fail conditions for operators can also be specified by
   operations named by `op_xh1...hn'`, where each

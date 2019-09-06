@@ -5,8 +5,7 @@
 
 --- Looks up a key in an association list.
 lookup :: Eq a => a -> [(a, b)] -> Maybe b
-lookup _ []       = Nothing
-lookup k ((x,y):xys)
-      | k==x      = Just y
-      | otherwise = lookup k xys
+lookup _ []          = Nothing
+lookup k ((x,y):xys) | k==x      = Just y
+                     | otherwise = lookup k xys
 
