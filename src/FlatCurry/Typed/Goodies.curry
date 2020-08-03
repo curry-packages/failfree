@@ -2,7 +2,7 @@
 --- Some goodies to deal with type-annotated FlatCurry programs.
 ---
 --- @author  Michael Hanus
---- @version April 2019
+--- @version August 2020
 ---------------------------------------------------------------------------
 
 module FlatCurry.Typed.Goodies where
@@ -80,17 +80,20 @@ etaExpandFuncDecl (AFunc qn ar vis texp (ARule tr args rhs)) =
 --- Apply arguments to a given FlatCurry expression by transforming
 --- this expression whenever possible.
 applyExp :: TAExpr -> [TAExpr] -> TAExpr
-applyExp exp [] = exp
+applyExp exp []           = exp
 applyExp exp vars@(v1:vs) = case exp of
   AComb te ct (qf,qt) cargs -> case ct of
     FuncPartCall m -> applyExp (AComb (dropArgTypes 1 te)
                                       (if m==1 then FuncCall
                                                else FuncPartCall (m-1))
-                                      (qf,qt) 
+                                      (qf,qt)
                                       (cargs ++ [v1]))
-                               vs
+                                      vs
     _ -> applyExp (AComb (dropArgTypes 1 te) FuncCall
-                         (pre "apply", FuncType (annExpr v1) te) [exp, v1]) vs
+                         (pre "apply",
+                          FuncType te
+                                   (FuncType (annExpr v1) (dropArgTypes 1 te)))
+                         [exp, v1]) vs
   ACase  te ct e brs -> ACase (adjustType te) ct e
                  (map (\ (ABranch p be) -> ABranch p (applyExp be vars)) brs)
   AOr    te e1 e2 -> AOr (adjustType te) (applyExp e1 vars) (applyExp e2 vars)
@@ -98,11 +101,13 @@ applyExp exp vars@(v1:vs) = case exp of
   AFree  te fvs e -> AFree  (adjustType te) fvs (applyExp e vars)
   ATyped te e ty  -> ATyped (adjustType te) (applyExp e vars) (adjustType ty)
   AVar   te _     -> applyExp (AComb (dropArgTypes 1 te) FuncCall
-                                     (pre "apply", FuncType (annExpr v1) te)
+                                     (pre "apply",
+                                      FuncType te (FuncType (annExpr v1)
+                                                          (dropArgTypes 1 te)))
                                      [exp, v1]) vs
   ALit   _  _     -> error "etaExpandFuncDecl: cannot apply literal"
  where
-  adjustType ty = dropArgTypes (length vars) ty 
+  adjustType ty = dropArgTypes (length vars) ty
 
 --- Remove the given number of argument types from a (nested) functional type.
 dropArgTypes :: Int -> TypeExpr -> TypeExpr
