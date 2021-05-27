@@ -2,18 +2,18 @@
 --- Some goodies to deal with type-annotated FlatCurry programs.
 ---
 --- @author  Michael Hanus
---- @version August 2020
+--- @version May 2021
 ---------------------------------------------------------------------------
 
 module FlatCurry.Typed.Goodies where
 
-import List         ( maximum, nub, union )
+import Data.List         ( maximum, nub, union )
 
 -- Imports from dependencies:
-import Data.FiniteMap
+import qualified Data.Map as FM
 import FlatCurry.Annotated.Goodies
 import FlatCurry.Annotated.Pretty    ( ppExp )
-import FlatCurry.Annotated.TypeSubst
+import FlatCurry.TypeAnnotated.TypeSubst
 import Text.Pretty                   ( showWidth )
 
 import FlatCurry.Typed.Types
@@ -30,17 +30,20 @@ unionTAProg (AProg name imps1 types1 funcs1 ops1)
 --- body of a function declaration.
 funcsOfFuncDecl :: TAFuncDecl -> [QName]
 funcsOfFuncDecl fd =
-  nub (trRule (\_ _ e -> funcsOfExp e) (\_ _ -> []) (funcRule fd))
- where
-  funcsOfExp = trExpr (\_ _ -> [])
-                      (\_ _ -> [])
-                      (\_ _ (qn,_) fs -> qn : concat fs)
-                      (\_ bs fs -> concatMap snd bs ++ fs)
-                      (\_ _ -> id)
-                      (\_ -> (++))
-                      (\_ _ fs fss -> concat (fs:fss))
-                      (\_ -> id)
-                      (\_ fs _ -> fs)
+  nub (trRule (\_ _ e -> funcsOfExpr e) (\_ _ -> []) (funcRule fd))
+
+--- Returns the names of all occurrences (with duplicates)
+--- of functions/constructors in an expression.
+funcsOfExpr :: TAExpr -> [QName]
+funcsOfExpr = trExpr (\_ _ -> [])
+                     (\_ _ -> [])
+                     (\_ _ (qn,_) fs -> qn : concat fs)
+                     (\_ bs fs -> concatMap snd bs ++ fs)
+                     (\_ _ -> id)
+                     (\_ -> (++))
+                     (\_ _ fs fss -> concat (fs:fss))
+                     (\_ -> id)
+                     (\_ fs _ -> fs)
 
 --- Returns `True` if the expression is non-deterministic,
 --- i.e., if `Or` or `Free` occurs in the expression.
@@ -129,7 +132,7 @@ isBaseType (ForallType _ _) = False
 matchType :: TypeExpr -> TypeExpr -> Maybe AFCSubst
 matchType t1 t2 = case (t1,t2) of
   (TVar v        , _) -> Just $ if t1 == t2 then emptyAFCSubst
-                                            else addToFM emptyAFCSubst v t2
+                                            else FM.insert v t2 emptyAFCSubst
   (TCons tc1 ts1 , TCons tc2 ts2) | tc1 == tc2 -> matchTypes ts1 ts2
   (FuncType a1 r1, FuncType a2 r2) -> matchTypes [a1,r1] [a2,r2]
   (ForallType _ _, _) -> error "matchType: ForallType occurred"
@@ -143,7 +146,7 @@ matchTypes (_:_)    []       = Nothing
 matchTypes (t1:ts1) (t2:ts2) = do
   s <- matchType t1 t2
   t <- matchTypes (map (subst s) ts1)(map (subst s) ts2)
-  return (plusFM s t)
+  return (FM.union s t)
 
 ----------------------------------------------------------------------------
 --- Transform name into Prelude-qualified name.

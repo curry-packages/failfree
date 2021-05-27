@@ -3,7 +3,7 @@
 --- related operations.
 ---
 --- @author Michael Hanus
---- @version April 2019
+--- @version May 2021
 -------------------------------------------------------------------------
 
 module ToolOptions
@@ -12,12 +12,13 @@ module ToolOptions
   )
  where
 
-import GetOpt
-import ReadNumeric       ( readNat )
-import System            ( exitWith )
+import Control.Monad         ( when, unless )
+import Data.Char             ( toUpper )
+import System.Console.GetOpt
+import Numeric               ( readNat )
+import System.Process        ( exitWith )
 
-import System.CurryPath  ( stripCurrySuffix )
-
+import System.CurryPath      ( stripCurrySuffix )
 
 data Options = Options
   { optVerb    :: Int    -- verbosity (0: quiet, 1: status, 2: interm, 3: all)
@@ -88,15 +89,13 @@ options =
            "show total verification time for each module"
   ]
  where
-  safeReadNat opttrans s opts =
-   let numError = error "Illegal number argument (try `-h' for help)"
-   in maybe numError
-            (\ (n,rs) -> if null rs then opttrans n opts else numError)
-            (readNat s)
+  safeReadNat opttrans s opts = case readNat s of
+    [(n,"")] -> opttrans n opts
+    _        -> error "Illegal number argument (try `-h' for help)"
 
   checkVerb n opts = if n>=0 && n<4
-                     then opts { optVerb = n }
-                     else error "Illegal verbosity level (try `-h' for help)"
+                       then opts { optVerb = n }
+                       else error "Illegal verbosity level (try `-h' for help)"
 
 -------------------------------------------------------------------------
 

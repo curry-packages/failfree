@@ -2,15 +2,15 @@
 --- A tool to translate FlatCurry operations into SMT assertions.
 ---
 --- @author  Michael Hanus
---- @version April 2019
+--- @version May 2021
 ---------------------------------------------------------------------------
 
 module Curry2SMT where
 
-import IOExts
-import List        ( intercalate, isPrefixOf, nub, union )
-import Maybe       ( catMaybes, fromJust, fromMaybe )
-import ReadNumeric ( readHex )
+import Data.IORef
+import Data.List     ( intercalate, isPrefixOf, nub, union )
+import Data.Maybe    ( catMaybes, fromJust, fromMaybe )
+import Numeric       ( readHex )
 
 -- Imports from dependencies:
 import FlatCurry.Annotated.Goodies ( argTypes, resultType )
@@ -60,7 +60,7 @@ fun2SMT (AFunc qn _ _ texp rule) =
 exp2SMT :: Maybe Term -> TAExpr -> Term
 exp2SMT lhs exp = case exp of
   AVar _ i          -> makeRHS (TSVar i)
-  ALit _ l          -> makeRHS (lit2smt l)
+  ALit _ l          -> makeRHS (lit2SMT l)
   AComb _ ct (qn,ftype) args ->
     -- TODO: reason about condition `not (null args)`
     makeRHS (TComb (cons2SMT (ct /= ConsCall || not (null args)) True qn ftype)
@@ -91,7 +91,7 @@ exp2SMT lhs exp = case exp of
               (exp2SMT lhs e)
 
 patternTest :: TAPattern -> Term -> Term
-patternTest (ALPattern _ l) be = tEqu be (lit2smt l)
+patternTest (ALPattern _ l) be = tEqu be (lit2SMT l)
 patternTest (APattern ty (qf,_) _) be = constructorTest True qf be ty
 
 --- Translates a constructor name and a term into an SMT formula
@@ -185,10 +185,12 @@ tcons2SMT (mn,tc)
 tdecl2SMT :: TypeDecl -> Command
 tdecl2SMT (TypeSyn tc _ _ _) =
   error $ "Cannot translate type synonym '" ++ showQName tc ++ "' into SMT!"
+tdecl2SMT (TypeNew tc _ _ _) =
+  error $ "Cannot translate newtype '" ++ showQName tc ++ "' into SMT!"
 tdecl2SMT (Type tc _ tvars consdecls) =
   DeclareDatatypes
    [(tcons2SMT tc, length tvars,
-     DT (map (\v -> 'T':show v) tvars) (map tconsdecl consdecls))]
+     DT (map (\ (v,_) -> 'T' : show v) tvars) (map tconsdecl consdecls))]
  where
   tconsdecl (Cons qn _ _ texps) =
     let cname = transOpName qn
@@ -236,9 +238,9 @@ cons2SMT withas withpoly qf rtype =
     else Id (transOpName qf)
   
 --- Translates a pattern into an SMT expression.
-pat2smt :: TAPattern -> Term
-pat2smt (ALPattern _ l)    = lit2smt l
-pat2smt (APattern ty (qf,_) ps)
+pat2SMT :: TAPattern -> Term
+pat2SMT (ALPattern _ l)    = lit2SMT l
+pat2SMT (APattern ty (qf,_) ps)
   | qf == pre "[]" && null ps
   = sortedConst "nil" (polytype2sort ty)
   | otherwise
@@ -246,10 +248,10 @@ pat2smt (APattern ty (qf,_) ps)
 
 --- Translates a literal into an SMT expression.
 --- We represent character as ints.
-lit2smt :: Literal -> Term
-lit2smt (Intc i)   = TConst (TInt i)
-lit2smt (Floatc f) = TConst (TFloat f)
-lit2smt (Charc c)  = TConst (TInt (ord c))
+lit2SMT :: Literal -> Term
+lit2SMT (Intc i)   = TConst (TInt i)
+lit2SMT (Floatc f) = TConst (TFloat f)
+lit2SMT (Charc c)  = TConst (TInt (ord c))
 
 --- Translates a qualified FlatCurry name into an SMT string.
 transOpName :: QName -> String
@@ -275,8 +277,10 @@ encodeSpecialChars = concatMap encChar
 decodeSpecialChars :: String -> String
 decodeSpecialChars [] = []
 decodeSpecialChars (c:cs)
-  | c == '%'  = chr (maybe 0 fst (readHex (take 2 cs)))
-                 : decodeSpecialChars (drop 2 cs)
+  | c == '%'  = let n = case readHex (take 2 cs) of
+                          [(h,"")] -> h
+                          _        -> 0
+                in chr n : decodeSpecialChars (drop 2 cs)
   | otherwise = c : decodeSpecialChars cs
 
 

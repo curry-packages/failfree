@@ -7,14 +7,14 @@
 --- SMT-LIB language specified in the package `smtlib`.
 ---
 --- @author  Michael Hanus
---- @version April 2019
+--- @version November 2020
 ------------------------------------------------------------------------------
 
 module ESMT where
 
-import List ( (\\), intercalate, isPrefixOf, union )
+import Data.List ( (\\), intercalate, isPrefixOf, union )
 
-import Data.FiniteMap
+import qualified Data.Map as FM
 import Text.Pretty
 
 ------------------------------------------------------------------------------
@@ -188,8 +188,7 @@ pairType =
   DeclareDatatypes 
     [("Pair",2,
       DT ["X", "Y"]
-         [ DCons "nil" [],
-           DCons "mk-pair" [("first",  SComb "X" []),
+         [ DCons "mk-pair" [("first",  SComb "X" []),
                             ("second", SComb "Y" [])]])]
 -}
 
@@ -249,19 +248,20 @@ typeParamsOfFunSig (FunSig _ ss s) =
   foldr union [] (map typeParamsOfSort (ss++[s]))
 
 --- A type paramter substitution.
-type TPSubst = FM Ident Sort
+type TPSubst = FM.Map Ident Sort
 
 --- The empty substitution
 emptyTPSubst :: TPSubst
-emptyTPSubst = emptyFM (<)
+emptyTPSubst = FM.empty
 
 ----------------------------------------------------------------------------
 --- Compute sort matching, i.e., if `matchSort t1 t2 = s`, then `t2 = s(t1)`.
 matchSort :: Sort -> Sort -> Maybe TPSubst
 matchSort s1@(SComb sn1 ss1) s2@(SComb sn2 ss2)
  | isTypeParameter s1
- = Just $ if s1 == s2 then emptyTPSubst
-                      else addToFM emptyTPSubst (head (typeParamsOfSort s1)) s2
+ = Just $ if s1 == s2
+            then emptyTPSubst
+            else FM.insert (head (typeParamsOfSort s1)) s2 emptyTPSubst
  | otherwise
  = if sn1 == sn2 then matchSorts ss1 ss2 else Nothing
 
@@ -272,12 +272,12 @@ matchSorts (_:_)    []       = Nothing
 matchSorts (t1:ts1) (t2:ts2) = do
   s <- matchSort t1 t2
   t <- matchSorts (map (substSort s) ts1)(map (substSort s) ts2)
-  return (plusFM s t)
+  return (FM.union s t)
 
 --- Applies a sort substitution to a sort.
 substSort :: TPSubst -> Sort -> Sort
 substSort sub (SComb sn ss) =
-  maybe (SComb sn (map (substSort sub) ss)) id (lookupFM sub sn)
+  maybe (SComb sn (map (substSort sub) ss)) id (FM.lookup sn sub)
 
 --- Applies a sort substitution to a term.
 substTerm :: TPSubst -> Term -> Term
@@ -302,7 +302,7 @@ substFunSig sub (FunSig fn ss s) =
 
 substDefSig :: TPSubst -> FunSigTerm -> FunSigTerm
 substDefSig tsub (ps, fsig, term) =
-  (ps \\ keysFM tsub, substFunSig tsub fsig, substTerm tsub term)
+  (ps \\ FM.keys tsub, substFunSig tsub fsig, substTerm tsub term)
 
 --------------------------------------------------------------------------
 -- Rename identifiers.
@@ -384,12 +384,33 @@ reduceAsInTerm (TComb f ts) = TComb (simpAs f) (map reduceAsInTerm ts)
                            _ -> qid
 
 --------------------------------------------------------------------------
+-- Get all sort identifiers occurring in a sort.
+sortIdsOfSort :: Sort -> [Ident]
+sortIdsOfSort (SComb s ss) = s : concatMap sortIdsOfSort ss
+
+-- Get all sorts occurring in a term.
+sortsOfTerm :: Term -> [Sort]
+sortsOfTerm (TConst _) = []
+sortsOfTerm (TSVar  _) = []
+sortsOfTerm (Let bs t) = concatMap (sortsOfTerm . snd) bs ++ sortsOfTerm t
+sortsOfTerm (Forall vs t) = map sortOfSortedVar vs ++ sortsOfTerm t
+sortsOfTerm (Exists vs t) = map sortOfSortedVar vs ++ sortsOfTerm t
+sortsOfTerm (TComb f ts) = sortsOfQIdent f ++ concatMap sortsOfTerm ts
+ where
+  sortsOfQIdent (Id _)   = []
+  sortsOfQIdent (As _ s) = [s]
+
+sortOfSortedVar :: SortedVar -> Sort
+sortOfSortedVar (SV _ s) = s
+
+--------------------------------------------------------------------------
 -- Remove parametric polymorphism (supported by `DefineSigsRec`)
 -- in an SMT script.
 -- First, for all QIdents occurring in assertions, their type-instantiated
 -- signatures are added. Then, for all QIdents occurring in these added
 -- operations, their type-instantiated signatures are added and so forth,
--- until nothing needs to be added.
+-- until nothing needs to be added. Finally, the type-instantiated signatures
+-- are renamed.
 unpoly :: [Command] -> [Command]
 unpoly commands =
    let allsigs = map sigNameSort (allSigs commands)
@@ -398,43 +419,42 @@ unpoly commands =
   addSigs _    []         = []
   addSigs qids (cmd:cmds) = case cmd of
     DefineSigsRec fts ->
-      let (qids1,ftss) = addAllInstancesOfSigs qids qids fts
+      let (qids1,ftss) = addAllInstancesOfSigs (union (allQIdsOfSigs fts) qids)
+                                               fts
       in DefineSigsRec ftss : addSigs qids1 cmds
     _ -> cmd : addSigs (union (allQIdsOfAssert cmd) qids) cmds
 
+  -- remove remaining polymorphic signatures and rename qualified names
+  -- according to their sorts
   unpolyCmd sigs cmd = case cmd of
-    DefineSigsRec fts -> DefineSigsRec $ map rnmTermInSig (map unpolySig fts)
+    DefineSigsRec fts -> DefineSigsRec $ map rnmTermInSig
+                                           (filter (\ (ps,_,_) -> null ps) fts)
     Assert term       -> Assert (rnmQIdWithTInstTerm sigs term)
     _ -> cmd
    where
     rnmTermInSig (ps,sig,term) = (ps, sig, rnmQIdWithTInstTerm sigs term)
 
-  unpolySig (ps, sig, term) =
-    let sub = addListToFM emptyTPSubst (map (\p -> (p, SComb "TVar" [])) ps)
-    in ([], substFunSig sub sig, substTerm sub term)
-
 -- Transforms a list of signatures into all its instances required by
 -- sorted identifiers (second argument) and also required by sorted
 -- identifiers in the added instances. Returns also the list of
 -- remaining identifiers.
-addAllInstancesOfSigs :: [QIdent] -> [QIdent] -> [FunSigTerm]
-                      -> ([QIdent], [FunSigTerm])
-addAllInstancesOfSigs allqids qids fts =
-  if null fts1
-    then (qids1,fts)
-    else let (qids2,fts2) = addAllInstancesOfSigs allqids
-                              (union qids1 (allQIdsOfSigs fts1 \\ allqids))
-                              (fts ++ fts1)
-         in (qids2, fts2)
+addAllInstancesOfSigs :: [QIdent] -> [FunSigTerm] -> ([QIdent], [FunSigTerm])
+addAllInstancesOfSigs allqids = addAllInsts allqids
  where
-  (qids1,fts1) = addInstancesOfSigs qids fts
+  addAllInsts qids fts =
+    let (qids1,fts1) = addInstancesOfSigs qids fts
+    in if null fts1
+         then (qids1,fts)
+         else let (qids2,fts2) = addAllInsts
+                                   (union qids1 (allQIdsOfSigs fts1 \\ allqids))
+                                   (fts ++ fts1)
+              in (qids2, fts2)
 
 -- Adds to given (polymorphic) define-sig elements all its type instances
 -- required by qualified identifiers occurring in the first argument
 -- provided that it does not already occur in the sig elements.
 -- The list of unused qualified identifiers is also returned.
-addInstancesOfSigs :: [QIdent] -> [FunSigTerm]
-                   -> ([QIdent], [FunSigTerm])
+addInstancesOfSigs :: [QIdent] -> [FunSigTerm] -> ([QIdent], [FunSigTerm])
 addInstancesOfSigs qids allsigs = addInstsOfSigs qids allsigs
  where
   addInstsOfSigs qids0 []         = (qids0,[])
@@ -504,10 +524,10 @@ toTInstName fn ps tsub n | fn == n   = addTInstName ps tsub n
                          | otherwise = n
 
 -- Add a sort index to a name of a (polymorphic) function w.r.t.
--- a list of type parameters and a substitution.
+-- a list of type parameters and a type substitution.
 addTInstName :: [Ident] -> TPSubst -> Ident -> Ident
-addTInstName ps tsub n =
-  n ++ concatMap (\p -> maybe p (('_':) . showSort) (lookupFM tsub p)) ps
+addTInstName tps tsub n =
+  n ++ concatMap (\p -> maybe "" (('_':) . showSort) (FM.lookup p tsub)) tps
 
 -- All signatures in a list of commands.
 allSigs :: [Command] -> [FunSigTerm]
@@ -530,9 +550,14 @@ sigTypeAsSort (t:ts) s = SComb "Func" [t, sigTypeAsSort ts s]
 --------------------------------------------------------------------------
 -- Pretty printing:
 
---- Show an SMT-LIB script with a newline
+--- Show an SMT-LIB script with a newline after transforming polymorphic
+--- functions into type-instanteded functions.
 showSMT :: [Command] -> String
 showSMT cmds = pPrint (pretty (SMTLib (unpoly cmds))) ++ "\n"
+
+--- Show an SMT-LIB script with a newline.
+showSMTRaw :: [Command] -> String
+showSMTRaw cmds = pPrint (pretty (SMTLib cmds)) ++ "\n"
 
 instance Pretty SMTLib where
   pretty (SMTLib cmds) = vsep (map pretty cmds)

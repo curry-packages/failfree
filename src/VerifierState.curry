@@ -1,7 +1,7 @@
 module VerifierState where
 
-import IOExts
-import List   ( find, isSuffixOf )
+import Data.IORef
+import Data.List  ( find, isSuffixOf )
 
 import Contract.Names ( isNonFailName, isPreCondName, isPostCondName )
 import FlatCurry.Typed.Types
