@@ -10,13 +10,14 @@ with arguments satisfying the non-failing precondition of the operation.
 
 Example:
 
-    -- The operation `head` does not fail if this precondition is satisfied:
+    -- The operation `head` does not fail if this condition is satisfied:
     head'nonfail xs = not (null xs)
     
     head (x:xs) = x
 
-Note that the non-failing precondition is not a precondition for `head`,
-i.e., it is still allowed to use `head` in a logical setting.
+Note that the non-failing precondition is not a precondition for `head`
+in the sense of contract-based programming, i.e.,
+it is still allowed to use `head` in a logical setting.
 However, it can be used to verify that the following operation
 is non-failing:
 
@@ -55,7 +56,7 @@ Basically, the following techniques are used to verify non-failing properties:
 
 
 Depending on the state of the operation `error`,
-this could also avoid the occurrence of run-time errors:
+this could also verify the absence of run-time errors:
 
     readLine = do
       putStr "Input a non-empty string:"
@@ -86,6 +87,10 @@ Current restrictions:
 
 Notes:
 ------
+
+- The current implementation uses the
+  [Z3 theorem prover](https://github.com/Z3Prover), i.e.,
+  the executable `z3` must be in the path when using the tool.
 
 - Contracts and non-fail conditions can also be stored in separate
   files. When checking a module `m`, if there is a Curry module `m_SPEC`
