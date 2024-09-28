@@ -2,7 +2,7 @@
 --- A tool to verify non-failure properties of Curry operations.
 ---
 --- @author  Michael Hanus
---- @version May 2021
+--- @version September 2024
 ---------------------------------------------------------------------------
 
 module Main where
@@ -63,7 +63,7 @@ testcv = verifyNonFailingMod defaultOptions { optVerb = 3, optContract = True }
 banner :: String
 banner = unlines [bannerLine,bannerText,bannerLine]
  where
-   bannerText = "Fail-Free Verification Tool for Curry (Version of 27/05/21)"
+   bannerText = "Fail-Free Verification Tool for Curry (Version of 28/09/24)"
    bannerLine = take (length bannerText) (repeat '=')
 
 ---------------------------------------------------------------------------
