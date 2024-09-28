@@ -29,6 +29,7 @@ import FlatCurry.Files                   ( readFlatCurryInt )
 import FlatCurry.Types
 import FlatCurry.Annotated.Goodies
 import FlatCurry.ShowIntMod              ( showCurryModule )
+import RW.Base                           ( ReadWrite )
 import System.FilePath                   ( (</>) )
 import System.IOExts                     ( evalCmd )
 import System.Path                       ( fileInPath )
@@ -141,7 +142,7 @@ verifyNonFailingMod opts modname = do
 
 -- Loads CASS analysis results for a module and its imported entities.
 loadAnalysisWithImports ::
-  (Read a, Show a) => Analysis a -> TAProg -> IO (ProgInfo a)
+  (Read a, Show a, ReadWrite a) => Analysis a -> TAProg -> IO (ProgInfo a)
 loadAnalysisWithImports analysis prog = do
   maininfo <- analyzeGeneric analysis (progName prog)
                 >>= return . either id error
