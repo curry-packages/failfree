@@ -142,7 +142,7 @@ verifyNonFailingMod opts modname = do
 
 -- Loads CASS analysis results for a module and its imported entities.
 loadAnalysisWithImports ::
-  (Read a, Show a, ReadWrite a) => Analysis a -> TAProg -> IO (ProgInfo a)
+  (Read a, Show a, ReadWrite a, Eq a) => Analysis a -> TAProg -> IO (ProgInfo a)
 loadAnalysisWithImports analysis prog = do
   maininfo <- analyzeGeneric analysis (progName prog)
                 >>= return . either id error
