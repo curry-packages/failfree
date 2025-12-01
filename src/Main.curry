@@ -2,7 +2,7 @@
 --- A tool to verify non-failure properties of Curry operations.
 ---
 --- @author  Michael Hanus
---- @version September 2024
+--- @version November 2025
 ---------------------------------------------------------------------------
 
 module Main where
@@ -26,7 +26,7 @@ import Control.Monad.Trans.State         ( StateT, get, put, evalStateT )
 import Debug.Profile
 import FlatCurry.TypeAnnotated.TypeSubst ( substRule )
 import FlatCurry.Files                   ( readFlatCurryInt )
-import FlatCurry.Types
+import FlatCurry.Types hiding ( pre )
 import FlatCurry.Annotated.Goodies
 import FlatCurry.ShowIntMod              ( showCurryModule )
 import RW.Base                           ( ReadWrite )
